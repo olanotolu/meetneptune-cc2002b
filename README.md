@@ -158,6 +158,42 @@ verified it actually fires, rather than trusting that it would:
 | pymupdf bumped to 1.27.0 | version pin |
 | threshold edited without recalibrating | threshold pin |
 
+## the underspecified parts, and what i decided
+
+the brief says several parts of the spec are underspecified on purpose. these
+are the calls, and none of them is resolved silently — each one shows up in the
+output as a note, a refusal, or a priced alternative.
+
+**records under fifty years old.** the form's NOTE releases them "only" to
+(a) a party, (b) someone with written authorization, (c) an attorney. but the
+sworn-statement group below has *five* options — (d) relation and (e) law
+enforcement aren't in that list. taken literally, a granddaughter requesting a
+20-year-old record should be refused.
+
+i note it and file anyway. the form prices its own exceptions: option (d)
+carries "(RELEASE OF RECORD UNDER THIS SECTION MUST BE APPROVED BY LEGAL
+DEPT.)" and option (e) "(LAW ENFORCEMENT PERSONNEL ONLY)". those parentheticals
+describe a *routing* path, not a refusal — a rule that never applied would not
+need a named approver. rejecting would invent a rule the form doesn't state;
+filing quietly would hide one it implies. so every such filing carries a note
+naming the review it should expect. `03_law_enforcement` is that case.
+
+**"if you do not specify the form you desire you will be sent a short form."**
+this makes `certificate_type` arguably optional with a default. i require it.
+that sentence describes what a clerk does with an incomplete *mailed* form, not
+what an automated filer should submit — and defaulting silently would hide a
+$20–$40 fee difference behind an omission. a missing `certificate_type` is a
+schema rejection, not a short form.
+
+**"other" is a checkbox with no price.** the schedule prices short and extended
+and never mentions it. i refuse to fill rather than invent a fee; the error
+names 311. see `unpriced_types` in the fee schedule.
+
+**the fee schedule contradicts itself.** covered in step 6 — type-specific rate
+billed, both readings priced.
+
+**month names on intake.** asked; the answer was to stay strict. see below.
+
 ## a second form
 
 out of scope on purpose, per the brief. but nothing here is CC2002B-specific except the two data files it loads:
@@ -172,24 +208,52 @@ onboarding a new form means measuring a new blank the same way `inspect_form.py`
 one source of dependency truth: `pyproject.toml`, resolved into `uv.lock`.
 `.python-version` pins the interpreter. nothing to keep in sync by hand.
 
+if you don't have `uv` (this is the only prerequisite — it fetches python 3.12
+itself, so nothing else needs to be installed first):
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh    # or: brew install uv
+```
+
 ```bash
 uv sync
-uv run python cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf
-uv run python cc2002b.py --check outputs/01_party_short.pdf samples/01_party_short.json
+```
+
+**1. check the committed filings before building anything.** these three are
+signed; you're verifying my artifacts, not your own build:
+
+```bash
 uv run python cc2002b.py --verify outputs/01_party_short.pdf $(cat SIGNING_KEY.pub)
 ```
 
-signing a filing of your own:
+**2. rebuild one yourself and confirm you got my exact bytes.** this is the
+determinism claim, and it's the whole reason the receipt's `output_hash` is
+worth anything:
+
+```bash
+uv run python cc2002b.py samples/01_party_short.json /tmp/mine.pdf
+shasum -a 256 /tmp/mine.pdf outputs/01_party_short.pdf   # same hash
+uv run python cc2002b.py --check /tmp/mine.pdf samples/01_party_short.json
+```
+
+filling writes to `/tmp` here on purpose. pointing it at `outputs/` would
+overwrite the signed originals with unsigned rebuilds — the pdf bytes would
+still match, but the receipt records the run date, so re-filing on a later day
+rewrites the receipt and the committed signature stops matching it. the
+evidence is the committed pair; regenerate it somewhere else.
+
+**3. sign one with your own key:**
 
 ```bash
 export CC2002B_SIGNING_KEY=$(uv run python cc2002b.py --keygen)
-uv run python cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf
-uv run python cc2002b.py --verify outputs/01_party_short.pdf $(uv run python cc2002b.py --pubkey)
+uv run python cc2002b.py samples/01_party_short.json /tmp/mine.pdf
+uv run python cc2002b.py --verify /tmp/mine.pdf $(uv run python cc2002b.py --pubkey)
 ```
 
-`make test` / `make lint` / `make types` / `make check` / `make sign-check` — all
-five run in ci on every push. `sign-check` does the whole loop on a throwaway
-key: sign a filing, then verify it the way a stranger would.
+**4. or just run everything:** `make test` / `make lint` / `make types` /
+`make check` / `make sign-check` — all five run in ci on every push.
+`sign-check` does the whole loop on a throwaway key: sign a filing, then verify
+it the way a stranger would.
 
 python is capped at 3.12 by **pikepdf** 8.7.1, which ships no cp313 wheel.
 (pymupdf isn't the constraint — its `cp310-abi3` wheels run anywhere ≥3.10.)

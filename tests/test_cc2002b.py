@@ -413,7 +413,8 @@ class CC2002BTests(unittest.TestCase):
                 app._load_fee_schedule(broken)
 
     def test_form_example_four_year_search_short_is_17(self):
-        # Page 2 example: four year search + one certified short copy = $17.
+        # Worked example from the fee schedule (packet page 3): a four year
+        # search and one certified copy would cost $17.00.
         payload = self.build(
             certificate_type="short",
             marriage={
