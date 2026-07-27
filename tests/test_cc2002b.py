@@ -281,6 +281,31 @@ class CC2002BTests(unittest.TestCase):
                 )
             )
 
+    def test_second_renderer_independently_catches_signature_tamper(self):
+        """mupdf must not grade its own ink alone — pdfium has to agree."""
+        with tempfile.TemporaryDirectory() as directory:
+            output, payload_path = self.fill(self.party, directory)
+            tampered = Path(directory) / "signature_pdfium.pdf"
+            doc = pymupdf.open(str(output))
+            doc[0].insert_text((150, 683), "SOL LEE", fontsize=10)
+            doc.save(str(tampered))
+            doc.close()
+            checked = app.check_correctness(tampered, payload_path, as_of=AS_OF)
+            self.assertFalse(checked["passed"])
+            pdfium_checks = [
+                c for c in checked["checks"]
+                if c["check"].startswith("pdfium_cross_check")
+            ]
+            self.assertTrue(pdfium_checks, "pdfium cross-check did not run")
+            self.assertTrue(
+                any(
+                    c["check"] == "pdfium_cross_check:no_ink:signature"
+                    and not c["passed"]
+                    for c in pdfium_checks
+                ),
+                pdfium_checks,
+            )
+
     def test_white_cover_tamper_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             output, payload_path = self.fill(self.party, directory)
