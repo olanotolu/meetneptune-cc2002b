@@ -3,6 +3,7 @@
 # dependencies = [
 #   "pymupdf==1.26.6",
 #   "pikepdf==8.7.1",
+#   "pypdfium2==5.9.0",
 # ]
 # ///
 """cc2002b.py — NYC Form CC2002B: a deterministic filing engine.
@@ -1337,6 +1338,111 @@ def _check_layer_b(
         blank.close()
 
 
+def _pdfium_render(path: Path) -> tuple[bytes, int, int]:
+    """Render page 1 at the checker DPI with pdfium — a second engine that
+    never touched the draw path, so mupdf cannot grade its own ink alone."""
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(path))
+    try:
+        img = doc[0].render(scale=DPI).to_pil().convert("RGB")
+        return img.tobytes(), img.width, img.height
+    finally:
+        doc.close()
+
+
+def _check_layer_c_pdfium(
+    filled_path: Path,
+    payload: dict,
+    fm: dict,
+    *,
+    as_of: date,
+    spec: FormSpec,
+) -> list[dict]:
+    """Cross-check layer B's verdict with an independent renderer (pdfium).
+
+    Deliberately narrow: re-derive "no ink outside approved rects" and "every
+    populated field is actually dark" from scratch on a wholly different
+    rasterizer. If mupdf and pdfium ever disagree, that is a mupdf-specific
+    rendering artifact, not proof the form is correctly filled.
+    """
+    try:
+        b_bytes, bw, bh = _pdfium_render(BLANK)
+        f_bytes, fw, fh = _pdfium_render(Path(filled_path))
+    except ImportError:
+        return [{
+            "check": "pdfium_cross_check:available",
+            "passed": False,
+            "detail": "pypdfium2 not installed; second-renderer cross-check skipped",
+        }]
+
+    width, height = min(bw, fw), min(bh, fh)
+    b_stride, f_stride = bw * 3, fw * 3
+    boxes = [(name, *_devbox(field_spec)) for name, field_spec in fm.items()]
+    dark = {name: 0 for name, *_ in boxes}
+    stray = 0
+
+    for y in range(height):
+        row_b = b_bytes[y * b_stride: y * b_stride + width * 3]
+        row_f = f_bytes[y * f_stride: y * f_stride + width * 3]
+        if row_b == row_f:
+            continue
+        bands = [box for box in boxes if box[3] <= y <= box[4]]
+        for x in range(width):
+            i = x * 3
+            pb, pf = row_b[i: i + 3], row_f[i: i + 3]
+            if pb == pf:
+                continue
+            for name, x0, x1, _, _ in bands:
+                if x0 <= x <= x1:
+                    if max(pf) < _DARK:
+                        dark[name] += 1
+                    break
+            else:
+                stray += 1
+
+    results: list[dict] = [{
+        "check": "pdfium_cross_check:no_stray_ink",
+        "passed": stray == 0,
+        "detail": f"{stray} dirty pixels outside approved rects (pdfium render)",
+    }]
+
+    marked = {
+        spec.form_boxes.get(payload.get("form_type")),  # type: ignore[arg-type]
+        spec.auth_boxes.get(payload.get("auth_checkbox")),  # type: ignore[arg-type]
+    }
+    for name, field_spec in fm.items():
+        d = dark.get(name, 0)
+        if field_spec["type"] == "checkbox":
+            should = name in marked
+            results.append({
+                "check": f"pdfium_cross_check:checkbox_ink:{name}",
+                "passed": (d > 0) == should,
+                "detail": f"{d} dark pixels (pdfium), expected marked={should}",
+            })
+            continue
+
+        # Protected fields (signature / signature date) and fields with no
+        # value for this payload must stay untouched — same as layer B's
+        # no_ink checks, but on pdfium's independent raster.
+        expected = text_for(name, payload, as_of=as_of) if field_spec.get(
+            "fill", True
+        ) else ""
+        if not expected:
+            results.append({
+                "check": f"pdfium_cross_check:no_ink:{name}",
+                "passed": d == 0,
+                "detail": f"{d} dark pixels in {name} (pdfium; should be empty)",
+            })
+        else:
+            results.append({
+                "check": f"pdfium_cross_check:ink_present:{name}",
+                "passed": d >= _MIN_DARK,
+                "detail": f"{d} dark pixels via pdfium (want >= {_MIN_DARK})",
+            })
+    return results
+
+
 def check_correctness(
     filled_path: str | Path,
     payload_path: str | Path,
@@ -1383,6 +1489,9 @@ def check_correctness(
     finally:
         blank.close()
         filled.close()
+    results += _check_layer_c_pdfium(
+        Path(filled_path), payload, fm, as_of=as_of, spec=spec
+    )
 
     failed = sum(1 for r in results if not r["passed"])
     return {"passed": failed == 0, "checks": results}

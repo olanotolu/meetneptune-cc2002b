@@ -131,11 +131,14 @@ most of the assessment weight lives here. reopen the pdf; do not trust process m
 
 | layer | what |
 |---|---|
-| a · semantic | added words **equal** expected; checkboxes must **cross** |
-| b · raster @ 150dpi | every dirty pixel must fall inside an approved rect |
+| a · semantic (mupdf) | added words **equal** expected; checkboxes must **cross** |
+| b · raster @ 150dpi (mupdf) | every dirty pixel must fall inside an approved rect |
+| c · raster @ 150dpi (**pdfium**) | independent re-render, independent verdict — mupdf never grades its own ink alone |
 | reject | stray ink · white erase · color · pale ink · paint-over · signature ink · extra page |
 
-adversarial tests mutate a good pdf (signature scribble, second auth box, white cover) and assert the **named** check fails.
+adversarial tests mutate a good pdf (signature scribble, second auth box, white cover) and assert the **named** check fails — including a dedicated test that layer c catches the signature tamper on its own, with a wholly different rasterizer (`tests/test_cc2002b.py::test_second_renderer_independently_catches_signature_tamper`).
+
+layer c is deliberately narrow: it re-derives only "no ink outside approved rects" and "every populated field is dark, every empty one isn't" from raw pdfium pixels. It does not re-implement checkbox crossing-geometry (that's a vector check, not a raster one) — its job is to catch the exact failure mode layer b's own rendering bugs could hide, not to duplicate layer a.
 
 ---
 
@@ -168,11 +171,38 @@ or: `uv run cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf`
 (deps pinned in pep 723 header + `requirements.txt` — same pins)
 
 ```text
-pymupdf==1.26.6   hot path + verify
-pikepdf==8.7.1    structural page extract only
+pymupdf==1.26.6    hot path + verify (layers a/b)
+pikepdf==8.7.1     structural page extract only
+pypdfium2==5.9.0   independent re-render for verify (layer c)
 ```
 
 no fastapi · no langchain · no ocr · no live model on the final filing.
+
+---
+
+## cli, not http — and why
+
+the brief leaves the transport open ("your call — justify it"). this ships as
+a cli on purpose:
+
+- the task is a **pure function** — json payload in, pdf + proof receipt out.
+  no session, no auth, no persistence (all explicitly out of scope). wrapping
+  that in an http server adds a process to keep alive and a port to secure
+  for zero behavioral benefit at this stage.
+- the **fingerprint gate and validation state machine are the product**, not
+  the transport. `validate()`, `fill_final()`, and `check_correctness()` are
+  already transport-agnostic — a five-line fastapi route (`payload =
+  request.json(); return fill_final(payload, tmp)`) is a thin, mechanical
+  wrapper whenever a service boundary is actually needed (batch intake queue,
+  a UI, a second form).
+- a cli composes directly with how a filing engine like this actually gets
+  used first: batch jobs, cron, a human running `--check` against a stack of
+  intake json before anything gets mailed. that's the operational reality of
+  "mail request for marriage records," not a live request/response UI.
+
+if the next step is a service, the seam is already there — `main()` is the
+only http-shaped code in the file; everything above section 10 doesn't know
+the cli exists.
 
 ---
 
@@ -186,11 +216,13 @@ read top → bottom:
 | 2–3 | normalize + fail-closed gate |
 | 4–5 | validate + fee |
 | 6–7 | fill + proof receipt |
-| 8 | semantic + raster checker |
+| 8 | semantic + raster (mupdf) + independent raster (pdfium) checker |
 | 9–10 | extract-blank + cli |
 
 ---
 
 ## two more weeks (not built)
 
-unicode font embed · `measure` command for the next revision · second renderer (pdfium) so mupdf does not grade itself alone · property/mutation fuzz at scale · resolve `other` pricing with 311
+unicode font embed · `measure` command for the next revision · property/mutation fuzz at scale · resolve `other` pricing with 311 · http wrapper around `fill_final`/`check_correctness` if a second consumer needs it (see [cli, not http — and why](#cli-not-http--and-why))
+
+~~second renderer (pdfium) so mupdf does not grade itself alone~~ — built: layer c in step 6.

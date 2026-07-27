@@ -2,7 +2,7 @@
   "template_hash": "f192ef937026ac99220d3f8816aa1b056dce5c32e6dc67c990e7dec6a309025f",
   "form_spec_version": "CC2002B@9/20/2016#1.0.0",
   "input_hash": "608ef7d6e589e642cd3305d7f9db58c002eab2df63b51e5f92afc96d4036ff18",
-  "output_hash": "8347b4cd99ff7a89a323e697d61b6e901c11fa60164d345f46ec91c10563af6a",
+  "output_hash": "10c5f6fbb2a6a8e15cd33c00373c68d09fb17aca12641301c0edb5b07be27f31",
   "renderer": {
     "engine": "mupdf",
     "pymupdf": "1.26.6"
@@ -27,7 +27,7 @@
   "notes": [
     "AMBIGUOUS FEE: Page 2 says both \"Each certified copy \u2026 costs $15.00 and each additional \u2026 is $10.00\" and that the extended form \"costs $35 for the initial copy and $30 for any additional copies\" \u2014 same purchase, two prices. Billed at $35.00/$30.00: the type-specific paragraph ends \"If you do not specify the form you desire you will be sent a short form\", making $15.00/$10.00 the default form's price, not a universal rate. If the flat reading is right, this overpays the initial copy by $20.00. Confirm with the City Clerk (311 or 212-NEW-YORK) if disputed."
   ],
-  "checks_passed": 83,
+  "checks_passed": 116,
   "checks_failed": 0,
   "check_passed": true,
   "as_of": "2026-07-26"
