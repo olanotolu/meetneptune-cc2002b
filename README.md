@@ -161,7 +161,20 @@ each fill also writes `*.proof.json` (hashes, fee, check counts) and `*.fees.jso
 ## run
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+uv run cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf
+uv run cc2002b.py --check outputs/01_party_short.pdf samples/01_party_short.json
+uv run python -m unittest discover -s tests -v
+```
+
+Recommended path — `uv` resolves a compatible Python itself from the PEP 723
+header below, regardless of what `python3` defaults to on your machine.
+Confirmed on a genuinely fresh clone with no system Python assumptions.
+
+or, manual venv — **pin the interpreter explicitly**, don't rely on
+whatever `python3` resolves to:
+
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf
@@ -169,8 +182,15 @@ python cc2002b.py --check outputs/01_party_short.pdf samples/01_party_short.json
 python -m unittest discover -s tests -v
 ```
 
-or: `uv run cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf`  
-(deps pinned in pep 723 header + `requirements.txt` — same pins)
+`pymupdf==1.26.6` has no published wheel yet for Python 3.13/3.14 — on a
+machine where plain `python3 -m venv` resolves to one of those (a real,
+reproduced failure, not hypothetical: a stock macOS install with a recent
+Xcode CLT defaults `python3` to 3.14), `pip install -r requirements.txt`
+fails outright. Pin to a Python version pymupdf has published wheels for
+(3.10–3.12) — and if that Python's own `ensurepip`/`pip` bootstrap is
+broken (happens with some standalone/managed Python installs), that's a
+local interpreter problem, not a pin problem; `uv run` above sidesteps
+both failure modes entirely and is the one actually verified clean here.
 
 ```text
 pymupdf==1.26.6    hot path + verify (layers a/b)
