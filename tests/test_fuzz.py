@@ -24,18 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "samples"
 AS_OF = date(2026, 7, 26)
 
-# Letters, digits, and space — all Latin-1, all renderable by base-14
-# Helvetica, and all wide enough to clear the raster legibility floor
-# (8 dark pixels). Thin glyphs like backtick, period, or comma can
-# pass validation but fail the pixel count at short lengths, so
-# punctuation is excluded from the fuzz alphabet. The .filter on
-# _text() guarantees at least one letter or digit, so a lone space
-# never reaches the filler.
+# Letters, digits, space — all clear the raster legibility floor (8 dark
+# pixels). Thin punctuation (backtick, period) can pass validation but
+# fail the pixel count at short lengths.
 _SAFE = string.ascii_letters + string.digits + " "
 
 
 def _text(max_size):
-    """Non-whitespace-only text from printable ASCII."""
     return st.text(alphabet=_SAFE, min_size=1, max_size=max_size).filter(
         lambda s: s.strip()
     )
@@ -72,7 +67,7 @@ def _zip():
 
 @st.composite
 def valid_payload(draw):
-    """A payload dict that passes both schema and validate()."""
+    """A payload dict that passes schema and validate()."""
     cert = draw(st.sampled_from(["short", "extended"]))
     marr_date = draw(_iso_date(1950, 2025))
     borough = draw(

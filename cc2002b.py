@@ -86,13 +86,9 @@ HELV = "helv"
 FONT_SIZES = (10, 9, 8)  # try largest first; ValueError at the floor
 DPI = 150 / 72           # checker raster scale (device pixels per point)
 
-# Base-14 Helvetica only covers Latin-1. Most applicant names do (Baker,
-# José, Müller) and stay on "helv" — no embedding needed, smallest output.
-# Names outside Latin-1 (Nguyễn, Łukasz, Παπαδόπουλος, Дмитрий) fall back to
-# an embedded Unicode font instead of being rejected outright. DejaVu Sans
-# covers Latin Extended, Cyrillic, and Greek; it does not cover CJK, Arabic,
-# or emoji — those still fail loud with a clear error, not silently as '·'.
-# License: Bitstream Vera, freely redistributable — fonts/LICENSE_DEJAVU.
+# Base-14 Helvetica covers Latin-1. Non-Latin-1 falls back to DejaVu Sans
+# (Latin Extended, Cyrillic, Greek). CJK/Arabic/emoji fail loud, not as '·'.
+# License: Bitstream Vera — fonts/LICENSE_DEJAVU.
 UNICODE_FONT_NAME = "DejaVuSans"
 UNICODE_FONT_PATH = ROOT / "fonts" / "DejaVuSans.ttf"
 
@@ -100,10 +96,7 @@ _unicode_font_cache: pymupdf.Font | None = None
 
 
 def _unicode_font() -> pymupdf.Font:
-    """Lazy on purpose: a missing fonts/DejaVuSans.ttf should only break
-    commands that actually ink or validate non-Latin-1 text, not every
-    invocation of this file — a module-level pymupdf.Font(...) call would
-    take down --extract-blank and even `python cc2002b.py` with no args."""
+    """Lazy: a missing font file shouldn't break commands that don't need it."""
     global _unicode_font_cache
     if _unicode_font_cache is None:
         _unicode_font_cache = pymupdf.Font(fontfile=str(UNICODE_FONT_PATH))
@@ -115,8 +108,7 @@ _MIN_DARK = 8
 _MAX_DARK_FRAC = 0.5
 _PAD = 1
 
-# Borough / state / phone / zip constants used by both validate() and
-# text_for() (display normalization).
+# Borough / state / phone / zip constants
 BOROUGHS = {
     "bronx": "Bronx",
     "brooklyn": "Brooklyn",
@@ -140,8 +132,7 @@ ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _require_iso_date_string(value: Any) -> Any:
-    """Bare pydantic `date` also accepts epoch ints and full ISO datetime
-    strings. Neither is a shape this form's JSON offers — reject both."""
+    """Reject anything that isn't a YYYY-MM-DD string."""
     if not isinstance(value, str) or not ISO_DATE_RE.fullmatch(value):
         raise ValueError("must be an ISO date string in YYYY-MM-DD format")
     return value
@@ -149,13 +140,8 @@ def _require_iso_date_string(value: Any) -> Any:
 
 IsoDate = Annotated[date, BeforeValidator(_require_iso_date_string)]
 
-# 50-year rule for relation/law_enforcement authorization (own this choice):
-# A naive reading of the top NOTE would hard-reject under-50 records for
-# anyone who is not a party / written-auth / attorney. We do NOT invent that
-# ban. These two options carry their own parentheticals (Legal Dept approval;
-# LE personnel only / proper purpose). Those clauses only make sense if the
-# form is meant to be *filed and routed*, not refused at the door.
-# So: fill the PDF, surface a review note, do not hard-reject.
+# 50-year rule: note, don't reject. The form's own parentheticals (Legal
+# Dept approval; LE personnel only) imply routing, not refusal.
 UNDER_50 = {
     "relation": (
         "the form adds '(RELEASE OF RECORD UNDER THIS SECTION MUST BE APPROVED "
@@ -170,7 +156,7 @@ UNDER_50 = {
 
 
 def _is_latin1(text: str) -> bool:
-    """True if base-14 Helvetica alone can ink this string, no embedding needed."""
+    """True if base-14 Helvetica can ink this without embedding."""
     try:
         text.encode("latin-1")
     except UnicodeEncodeError:
@@ -179,8 +165,7 @@ def _is_latin1(text: str) -> bool:
 
 
 def _uninkable_char_error(field_name: str, value: str) -> str | None:
-    """Neither base-14 Helvetica nor the embedded Unicode fallback can ink
-    this character. Fail loud, not as a silently substituted '·'."""
+    """Return error message if a character can't be inked by either font."""
     for ch in value:
         code = ord(ch)
         if code < 0x20 or 0x7F <= code <= 0x9F:
@@ -203,11 +188,9 @@ def _uninkable_char_error(field_name: str, value: str) -> str | None:
 # 1. Approved spec (cc2002b.spec.json), fingerprint gate, and the strict
 #    Pydantic intake schema.
 #
-# A great engineer does not stretch old coordinates onto an unknown
-# government form. The fingerprint gate fails closed. Migration is offline;
-# fill is not. Coordinates in cc2002b.spec.json were measured once, offline,
-# with human sign-off (see tools/inspect_form.py, evidence/) — the runtime
-# below only ever reads the already-approved file, never re-derives it.
+# The fingerprint gate fails closed. Coordinates were measured once, offline,
+# with human sign-off. The runtime only reads the approved spec, never
+# re-derives it.
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -232,11 +215,7 @@ def _blank_sha256(path: Path = BLANK) -> str:
 
 
 def resolve_form_spec(blank_path: Path = BLANK) -> dict[str, Any]:
-    """Fresh hash of the bytes on disk vs. the one approved spec. Fail closed.
-
-    No registry dict: there is exactly one approved form, so "unknown
-    hash" is a single equality check, not a dict lookup.
-    """
+    """Hash the blank on disk vs. the approved spec. Fail closed."""
     digest = _blank_sha256(blank_path)
     if digest != SPEC["blank_sha256"]:
         raise ValueError(
@@ -253,7 +232,7 @@ def resolve_form_spec(blank_path: Path = BLANK) -> dict[str, Any]:
 def assert_blank(
     doc: pymupdf.Document, spec: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Reject a source swap before hard-coded geometry can silently drift."""
+    """Reject a source swap before geometry can drift."""
     spec = spec or resolve_form_spec(BLANK)
     if doc.page_count != spec["page_count"]:
         raise ValueError(
@@ -295,17 +274,12 @@ class Address(BaseModel):
 class Person(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    birth_date: IsoDate  # ISO 8601 (YYYY-MM-DD) only, and only that string
-    # shape — the before-validator rejects "May 30, 1991", "05/30/1991",
-    # epoch ints, and full ISO datetime strings; one representation for one
-    # fact, no parser needed on our side.
+    birth_date: IsoDate
 
 
 class Marriage(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    date: IsoDate  # CTO's "strict month" rule generalizes: a real ISO
-    # calendar date can't carry a month name or an out-of-range month in the
-    # first place, so there's nothing left to range-check after parsing.
+    date: IsoDate
     borough: str
     license_no: str
     additional_search_years: list[Annotated[int, Field(strict=True)]] = Field(
@@ -356,11 +330,8 @@ class AuthLawEnforcement(BaseModel):
         return v
 
 
-# extra="forbid" on every variant above is load-bearing, not stylistic: it's
-# what makes e.g. {"kind": "party", "relation": "child"} a schema rejection
-# instead of Pydantic's default of silently dropping the stray field. Do not
-# relax it for convenience — that silently reintroduces the "leaked field"
-# bug this design otherwise makes structurally impossible.
+# extra="forbid" makes leaked fields (e.g. {"kind": "party", "relation": "child"})
+# a schema rejection instead of a silent drop.
 Authorization = Annotated[
     Union[
         AuthParty,
@@ -393,17 +364,8 @@ def load_application(path: str | Path) -> Application:
 
 
 def form_values(app: Application) -> dict[str, Any]:
-    """The field-name-keyed flat dict that fill_final/text_for/validate's
-    per-field loops expect — the sole seam between the typed Application and
-    the draw/verify code in sections 6-8 below, which is unchanged and
-    doesn't know Pydantic exists.
-
-    Native types are preserved (not pre-stringified): text_for() special-
-    cases "month" as a real int, lists get joined, etc. Keys prefixed with
-    "_" are bookkeeping only (checkbox discriminators) — _canonical_payload_hash
-    already ignores non-field data, and these two keys are never iterated as
-    form fields since they don't appear in SPEC["fields"].
-    """
+    """Flat dict keyed by spec field names — the seam between Application
+    and the draw/verify code."""
     auth = app.authorization
     years = sorted(set(app.marriage.additional_search_years))
     return {
@@ -457,18 +419,10 @@ def validate(
     as_of: date | None = None,
     spec: dict[str, Any] | None = None,
 ) -> ValidationResult:
-    """Reject inputs that would produce a kicked-back filing.
+    """Business-rule layer. Schema shape is already guaranteed by Pydantic;
+    this catches what a validly-shaped payload can still get wrong.
 
-    Schema shape (types, required fields, exactly-one sworn statement, the
-    strict month range) is already guaranteed by Application/Authorization
-    before this ever runs — a bad shape never reaches here at all, it raises
-    pydantic.ValidationError at load_application()/model_validate() time.
-    This function is the business-rule layer: things a validly *shaped*
-    payload can still get wrong (a real date before 1950, a name that
-    doesn't fit the printed box, a borough that isn't one of the five).
-
-    as_of is injected so tests (and batch runs) do not depend on wall-clock
-    date.today() for year bounds and under-50 notes.
+    as_of is injected so tests don't depend on wall-clock date.today().
     """
     as_of = as_of or date.today()
     spec = spec or SPEC
@@ -489,9 +443,7 @@ def validate(
 
     auth = app.authorization
     marriage = app.marriage
-    marr = marriage.date  # already a real calendar date — schema guarantees
-    # it exists and parses; a real date can still fail business rules
-    # (before 1950, in the future), which is what's left to check here.
+    marr = marriage.date
 
     if marr.year < 1950:
         errors.append(
@@ -523,8 +475,7 @@ def validate(
         if not value or not value.strip():
             errors.append(f"{label} is required")
 
-    # Birth dates — presence and calendar validity are schema-guaranteed;
-    # only "is it in the future" is left as a business rule.
+    # Birth dates — only future check remains (schema handles the rest)
     for value, label in (
         (app.spouse_a.birth_date, "spouse A birth date"),
         (app.spouse_b.birth_date, "spouse B birth date"),
@@ -568,8 +519,7 @@ def validate(
             f"10-digit US number (separators ok, extensions not supported)"
         )
 
-    # Search years — the only representation now is the structured list;
-    # there is no parallel free-text input left for it to disagree with.
+    # Search years
     for yr in marriage.additional_search_years:
         if not (1950 <= yr <= as_of.year):
             errors.append(f"requested search year {yr} is outside 1950–{as_of.year}")
@@ -686,12 +636,7 @@ def _text_width(text: str, fontname: str, fontfile: str | None, size: float) -> 
 def _wrap_lines(
     text: str, w: float, fontname: str, fontfile: str | None, size: float
 ) -> tuple[str, ...]:
-    """Greedy word-wrap at this font size.
-
-    Returns (text,) unchanged whenever the whole string already fits one
-    line — a field that fit before this existed must keep fitting on
-    exactly one line, byte-for-byte, not get reflowed for no reason.
-    """
+    """Greedy word-wrap. Returns (text,) unchanged if it already fits."""
     budget = w - 4
     if _text_width(text, fontname, fontfile, size) <= budget:
         return (text,)
@@ -704,8 +649,7 @@ def _wrap_lines(
         else:
             if current:
                 lines.append(current)
-            current = word  # even if this single word alone overflows —
-            # the fit check below (per-line width) is what actually rejects it
+            current = word
     if current:
         lines.append(current)
     return tuple(lines)
@@ -718,18 +662,8 @@ def _fit(
     field_name: str = "",
     sizes: tuple[float, ...] = FONT_SIZES,
 ) -> tuple[float, str, str | None, tuple[str, ...]]:
-    """Largest size that fits — wrapping to more than one line only if the
-    field's own height has room for it — plus which font and which lines.
-
-    Latin-1 text stays on base-14 Helvetica — no embedding, smallest
-    output, the same font every existing sample and screenshot already
-    shows. Only text that actually needs it falls back to the embedded
-    Unicode font, measured through its own metrics (Helvetica's aren't
-    valid for a different typeface).
-
-    `sizes` defaults to FONT_SIZES; fields with their own narrower floor
-    (declared via field_spec["sizes"], e.g. the relation/law-enforcement
-    inline blanks) pass it explicitly — every other field is unaffected.
+    """Largest size that fits, wrapping if height allows. Latin-1 stays on
+    base-14 Helvetica; non-Latin-1 falls back to the embedded Unicode font.
     """
     latin1 = _is_latin1(text)
     fontname = HELV if latin1 else UNICODE_FONT_NAME
@@ -740,10 +674,6 @@ def _fit(
             _text_width(ln, fontname, fontfile, size) <= w - 4 for ln in lines
         )
         if len(lines) == 1:
-            # Exact original rule — must not change for anything that
-            # already fit on one line, or every field's chosen size can
-            # silently shift (confirmed: this changed real output before
-            # being caught by a byte-diff against the previous samples).
             fits_height = size <= h - 2
         else:
             fits_height = len(lines) * (size * LINE_SPACING) <= h - 2
@@ -760,17 +690,13 @@ def text_for(
     *,
     as_of: date | None = None,
 ) -> str:
-    """The value the form should ink for this field — one source for all
-    subsystems. `payload` here is form_values(app)'s flat output — canonical
-    field-map keys only, no aliases to resolve."""
+    """Display value for a field. payload is form_values() output."""
     val = payload.get(field_name)
     if val is None:
         return ""
     if isinstance(val, list):
         return ", ".join(str(v) for v in val)
     if field_name == "month":
-        # Guaranteed a real 1-12 int by Marriage.date being a valid calendar
-        # date — nothing left to guard against here.
         return calendar.month_name[val]
     if field_name == "license_was_issued":
         return BOROUGHS.get(str(val).strip().lower(), str(val).strip())
@@ -834,11 +760,6 @@ def fill_final(
                     text, field_spec["w"], field_spec["h"], name,
                     sizes=field_spec.get("sizes", FONT_SIZES),
                 )
-                # Same formula as the original single-line centering,
-                # generalized: reduces to the exact original expression
-                # when len(lines) == 1 (block_height == ascent), so every
-                # field that already fit on one line draws at the exact
-                # same pixel position as before wrapping existed.
                 ascent = size * 0.8
                 line_height = size * LINE_SPACING
                 block_height = (len(lines) - 1) * line_height + ascent
@@ -877,7 +798,7 @@ def fill_final(
 
 
 def _canonical_payload_hash(app: Application) -> str:
-    """Hash the applicant's typed input — one canonical serialization."""
+    """Canonical hash of the applicant's typed input."""
     blob = json.dumps(
         app.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
     ).encode()
@@ -924,8 +845,7 @@ def build_proof_receipt(
 
 
 def write_proof_receipt(receipt: dict[str, Any], pdf_path: Path) -> Path:
-    """One report. Fee data already lives in receipt["fee"] — a separate
-    .fees.json duplicated it for zero benefit."""
+    """Write the proof receipt JSON next to the PDF."""
     proof_path = Path(str(pdf_path) + ".proof.json")
     tmp_proof = str(proof_path) + ".tmp"
     try:
@@ -944,7 +864,6 @@ def write_proof_receipt(receipt: dict[str, Any], pdf_path: Path) -> Path:
 # 8. Verification — semantic + raster; prove the visible artifact
 #
 # A model may propose; only a mechanical check may accept.
-# Most candidates skip this. The brief says it is what they care most about.
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -1234,12 +1153,8 @@ def _check_layer_c_pdfium(
     as_of: date,
     spec: dict[str, Any],
 ) -> list[dict]:
-    """Cross-check layer B's verdict with an independent renderer (pdfium).
-
-    Deliberately narrow: re-derive "no ink outside approved rects" and "every
-    populated field is actually dark" from scratch on a wholly different
-    rasterizer. If mupdf and pdfium ever disagree, that is a mupdf-specific
-    rendering artifact, not proof the form is correctly filled.
+    """Cross-check layer B with an independent renderer. If mupdf and pdfium
+    disagree, it's a rendering artifact, not proof the form is correct.
     """
     try:
         b_bytes, bw, bh = _pdfium_render(BLANK)
@@ -1294,9 +1209,7 @@ def _check_layer_c_pdfium(
             })
             continue
 
-        # Protected fields (signature / signature date) and fields with no
-        # value for this payload must stay untouched — same as layer B's
-        # no_ink checks, but on pdfium's independent raster.
+        # Protected/empty fields must stay untouched — same as layer B's no_ink
         expected = text_for(name, payload, as_of=as_of) if field_spec.get(
             "fill", True
         ) else ""
@@ -1390,17 +1303,10 @@ def check_correctness(
 
 
 def extract_blank(packet_path: str | Path, out_path: str | Path, page: int = 2) -> Path:
-    """Extract one page (1-based) from the assessment packet into a blank form.
+    """Extract one page from the packet into a blank form. pikepdf is imported
+    here (not at module top) because the hot path never touches this.
 
-    Only the --extract-blank CLI branch calls this — the fill/check hot path
-    never touches it, so pikepdf is imported here, not at module top level.
-    The approved blank is already committed; this exists to reproduce it
-    from the source packet, not because filling depends on it.
-
-    deterministic_id=True: pikepdf randomizes /ID on every save by
-    default, so the same packet produced a different SHA-256 each
-    extraction — breaking the fingerprint gate's reproducibility. Page
-    content is identical either way; only /ID needed pinning.
+    deterministic_id=True pins /ID so the SHA-256 is reproducible.
     """
     import pikepdf
 

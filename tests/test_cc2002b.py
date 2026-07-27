@@ -1,15 +1,7 @@
 """Mechanical tests for the CC2002B filing engine.
 
-Named checks must fail for named forgeries. A check that only says "failed"
-is ceremonial.
-
-Two layers can now reject a bad payload: schema (Application/Authorization —
-wrong type, missing required field, unknown authorization kind, a leaked
-field on the wrong sworn-statement variant) and business rules (validate() —
-a real date before 1950, a name that doesn't fit the printed box). Each test
-below exercises exactly one of those layers; which one is the point of the
-test, not an implementation detail, so assertRejectsAtSchema/AtValidate make
-that explicit instead of leaving it implicit in which exception type shows up.
+Named checks must fail for named forgeries. Two layers reject bad payloads:
+schema (Pydantic) and business rules (validate()). Each test targets one.
 """
 
 from __future__ import annotations
@@ -38,8 +30,7 @@ class CC2002BTests(unittest.TestCase):
         cls.party = json.loads(cls.party_path.read_text())
 
     def build(self, **overrides):
-        """Deep-copy the party sample and merge overrides one level deep, so
-        e.g. build(marriage={"year": 1949}) keeps every other marriage key."""
+        """Deep-copy the party sample and merge overrides one level deep."""
         candidate = copy.deepcopy(self.party)
         for key, value in overrides.items():
             if isinstance(value, dict) and isinstance(candidate.get(key), dict):
@@ -98,17 +89,13 @@ class CC2002BTests(unittest.TestCase):
         self.assertTrue(app.validate(self.app_from(self.party), as_of=AS_OF).valid)
 
     def test_marriage_date_is_strict_iso_only(self):
-        """CTO's 'strict month' rule generalizes to the whole date: a real
-        ISO calendar date can't carry a month name or an out-of-range month
-        in the first place, so there's nothing left to range-check — still
-        ink English month name from the parsed date."""
+        """Strict ISO date — month name is display-only, never accepted as input."""
         as_iso = app.validate(
             self.app_from(self.build(marriage={"date": "2025-05-30"})), as_of=AS_OF
         )
         self.assertTrue(as_iso.valid, as_iso.errors)
 
-        # Wrong shape entirely, or a real date but with an invalid calendar
-        # value — Pydantic's date type rejects both the same way.
+        # Wrong shape or invalid calendar value — both rejected at schema
         for bad_date in ("May 30, 2025", "05/30/2025", 20250530, True, "2025-13-40"):
             self.assertRejectsAtSchema(self.build(marriage={"date": bad_date}))
 
@@ -118,21 +105,13 @@ class CC2002BTests(unittest.TestCase):
         self.assertEqual(app.text_for("month", flat, as_of=AS_OF), "May")
 
     def test_dates_reject_epoch_ints_and_iso_datetime_strings(self):
-        # Pydantic's bare `date` type is looser than "ISO 8601 only": it
-        # also accepts an epoch int/float (0 -> 1970-01-01) and a full ISO
-        # datetime string ("...T00:00:00"). Neither is a shape this form's
-        # JSON contract offers, so both must be schema rejections, not
-        # silent coercions to a date the applicant never actually typed.
+        # Bare pydantic date accepts epoch ints and datetime strings — reject both
         for bad_date in (0, 1748563200, "2025-05-30T00:00:00", "2025-05-30T00:00:00Z"):
             self.assertRejectsAtSchema(self.build(marriage={"date": bad_date}))
             self.assertRejectsAtSchema(self.build(spouse_a={"birth_date": bad_date}))
 
     def test_boolean_date_and_copies_are_rejected_by_strict_schema(self):
-        # Plain (non-strict) Pydantic int fields silently coerce True -> 1 —
-        # Field(strict=True) is what keeps that from reintroducing the
-        # laxness the original _require_int explicitly guarded against.
-        # date itself is a native Pydantic type, not an int, so a bare bool
-        # is rejected as the wrong type outright, same effect.
+        # Field(strict=True) prevents bool->int coercion
         self.assertRejectsAtSchema(self.build(marriage={"date": True}))
         self.assertRejectsAtSchema(self.build(copies=True))
 
@@ -148,10 +127,7 @@ class CC2002BTests(unittest.TestCase):
         )
 
     def test_unknown_authorization_kind_is_rejected_by_schema(self):
-        # Structurally impossible to "pick two" now — there's exactly one
-        # authorization object, discriminated by a Literal kind. An unknown
-        # kind is a schema rejection, not a "duplicate selection" business
-        # rule the old scalar auth_checkbox needed custom code to catch.
+        # Discriminated union — unknown kind is a schema rejection
         self.assertRejectsAtSchema(self.build(authorization={"kind": "both"}))
 
     def test_missing_authorization_is_rejected_by_schema(self):
@@ -181,11 +157,7 @@ class CC2002BTests(unittest.TestCase):
         self.assertTrue(valid.valid, valid.errors)
 
     def test_longer_relation_words_fit_via_the_inline_blank_size_floor(self):
-        # auth_relation is ~47pt — a printed underscore run inside a
-        # sentence, not a full cell. "granddaughter"/"step-daughter" are
-        # real words a real applicant will type; rejecting them outright
-        # at the 8pt floor every other field uses would be refusing valid
-        # input. A human filling this by hand would just write smaller.
+        # auth_relation has a narrower size floor (10/9/8/7/6) for longer words
         for relation in ("granddaughter", "step-daughter"):
             payload = self.build(
                 authorization={"kind": "relation", "relation": relation}
@@ -200,7 +172,7 @@ class CC2002BTests(unittest.TestCase):
                     (relation, [c for c in checked["checks"] if not c["passed"]]),
                 )
 
-        # the floor has a bottom too — this doesn't fit even at 6pt
+        # But the floor has a bottom — this doesn't fit even at 6pt
         too_long = app.validate(
             self.app_from(
                 self.build(
@@ -241,9 +213,7 @@ class CC2002BTests(unittest.TestCase):
         self.assertTrue(valid.valid, valid.errors)
 
     def test_birth_dates_must_be_iso_dates(self):
-        # Presence and calendar validity are schema concerns now — a blank,
-        # a non-date word, or a written month are all the wrong shape, not
-        # a business-rule rejection.
+        # Presence and calendar validity are schema concerns
         self.assertRejectsAtSchema(self.build(spouse_a={"birth_date": ""}))
         self.assertRejectsAtSchema(self.build(spouse_b={"birth_date": "tomorrow"}))
         self.assertRejectsAtSchema(
@@ -296,9 +266,7 @@ class CC2002BTests(unittest.TestCase):
         )
 
     def test_wrappable_reason_text_fills_instead_of_rejecting(self):
-        # A real, clerk-acceptable reason that doesn't fit on one line —
-        # refusing this would be rejecting valid input, not catching bad
-        # input, which is the opposite of what validation is supposed to do.
+        # A valid reason that doesn't fit on one line should wrap, not reject
         long_reason = "Needed for an immigration benefit application filed with USCIS"
         payload = self.build(reason=long_reason)
         result = app.validate(self.app_from(payload), as_of=AS_OF)
@@ -312,11 +280,7 @@ class CC2002BTests(unittest.TestCase):
             )
 
     def test_single_line_fields_are_unaffected_by_wrapping(self):
-        # Wrapping must never change the chosen size/position for text
-        # that already fit on one line — confirmed by regenerating all
-        # three committed samples and diffing word-for-word against the
-        # pre-wrapping versions; this pins the underlying rule so a
-        # regression here fails a fast unit test, not just a manual diff.
+        # Wrapping must not change size/position for text that fits on one line
         field = app.FIELDS["name_of_person_requesting_search"]
         size, fontname, fontfile, lines = app._fit(
             "Sol Lee", field["w"], field["h"], "name_of_person_requesting_search"
@@ -361,9 +325,7 @@ class CC2002BTests(unittest.TestCase):
             )
 
     def test_certificate_type_other_is_rejected(self):
-        # Kept in the Literal (not excluded from the schema) so this stays a
-        # specific, human-readable business-rule rejection instead of an
-        # opaque schema error — same reasoning the fee-ambiguity note gets.
+        # 'other' has no fee schedule price — refuse to print
         self.assertRejectsAtValidate(
             self.build(certificate_type="other"), msg_substr="other"
         )
