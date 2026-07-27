@@ -1,0 +1,32 @@
+{
+  "template_hash": "f192ef937026ac99220d3f8816aa1b056dce5c32e6dc67c990e7dec6a309025f",
+  "form_spec_version": "CC2002B@9/20/2016#1.0.0",
+  "input_hash": "983e27fdf01ac50d80df72dbd3e6b7dd950e8969357a12a0408ddf6f8c3c6acc",
+  "output_hash": "ef6cdcd4ae4555a0f0c70081c4f8e216af2fe8df5fb2cacbfc8322d3806f4375",
+  "renderer": {
+    "engine": "mupdf",
+    "pymupdf": "1.26.6"
+  },
+  "verification_engines": [
+    "mupdf"
+  ],
+  "fee": {
+    "total": 15.0,
+    "copy_fee": 15.0,
+    "search_fee": 0.0,
+    "requires_review": false,
+    "breakdown": {
+      "form_type": "short",
+      "num_copies": 1,
+      "first_copy": 15.0,
+      "additional_copy": 10.0,
+      "years_searched": 1
+    },
+    "fee_status": "resolved"
+  },
+  "notes": [],
+  "checks_passed": 81,
+  "checks_failed": 0,
+  "check_passed": true,
+  "as_of": "2026-07-26"
+}

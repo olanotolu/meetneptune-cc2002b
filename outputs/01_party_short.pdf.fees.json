@@ -1,0 +1,18 @@
+{
+  "total": 15.0,
+  "copy_fee": 15.0,
+  "search_fee": 0.0,
+  "requires_review": false,
+  "breakdown": {
+    "form_type": "short",
+    "num_copies": 1,
+    "first_copy": 15.0,
+    "additional_copy": 10.0,
+    "years_searched": 1
+  },
+  "fee_status": "resolved",
+  "notes": [],
+  "form_type": "short",
+  "num_copies": 1,
+  "years_searched": 1
+}

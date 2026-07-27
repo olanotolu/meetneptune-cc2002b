@@ -1,0 +1,34 @@
+{
+  "template_hash": "f192ef937026ac99220d3f8816aa1b056dce5c32e6dc67c990e7dec6a309025f",
+  "form_spec_version": "CC2002B@9/20/2016#1.0.0",
+  "input_hash": "3adaba0a0779a2dfb0f9acc71db940e874a145e77ca014a7a31b5fffffafe716",
+  "output_hash": "f3f7ed0dbc2d8011330835300f2b210fa093bdc7e6c62ac907beb4015e55f64f",
+  "renderer": {
+    "engine": "mupdf",
+    "pymupdf": "1.26.6"
+  },
+  "verification_engines": [
+    "mupdf"
+  ],
+  "fee": {
+    "total": 15.0,
+    "copy_fee": 15.0,
+    "search_fee": 0.0,
+    "requires_review": false,
+    "breakdown": {
+      "form_type": "short",
+      "num_copies": 1,
+      "first_copy": 15.0,
+      "additional_copy": 10.0,
+      "years_searched": 1
+    },
+    "fee_status": "resolved"
+  },
+  "notes": [
+    "auth_checkbox=5 on a record 5 years old (under 50) is not automatic release: the form marks this option '(LAW ENFORCEMENT PERSONNEL ONLY)' and requires that 'the marriage record will be used for a proper purpose', so expect the City Clerk to verify the requester's authority."
+  ],
+  "checks_passed": 81,
+  "checks_failed": 0,
+  "check_passed": true,
+  "as_of": "2026-07-26"
+}
