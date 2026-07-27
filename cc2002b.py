@@ -72,6 +72,17 @@ HELV = "helv"
 FONT_SIZES = (10, 9, 8)  # try largest first; ValueError at the floor
 DPI = 150 / 72           # checker raster scale (device pixels per point)
 
+# Base-14 Helvetica only covers Latin-1. Most applicant names do (Baker,
+# José, Müller) and stay on "helv" — no embedding needed, smallest output.
+# Names outside Latin-1 (Nguyễn, Łukasz, Παπαδόπουλος, Дмитрий) fall back to
+# an embedded Unicode font instead of being rejected outright. DejaVu Sans
+# covers Latin Extended, Cyrillic, and Greek; it does not cover CJK, Arabic,
+# or emoji — those still fail loud with a clear error, not silently as '·'.
+# License: Bitstream Vera, freely redistributable — fonts/LICENSE_DEJAVU.
+UNICODE_FONT_NAME = "DejaVuSans"
+UNICODE_FONT_PATH = ROOT / "fonts" / "DejaVuSans.ttf"
+_UNICODE_FONT = pymupdf.Font(fontfile=str(UNICODE_FONT_PATH))
+
 # Raster thresholds (calibrated against measured forgeries, not vibes)
 _DARK = 128
 _MIN_DARK = 8
@@ -384,18 +395,32 @@ def _stripped(payload: dict, key: str) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _latin1_error(field_name: str, value: str) -> str | None:
-    """Base-14 Helvetica cannot ink arbitrary Unicode. Fail loud, not as '·'."""
+def _is_latin1(text: str) -> bool:
+    """True if base-14 Helvetica alone can ink this string, no embedding needed."""
+    try:
+        text.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return not any(ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F for ch in text)
+
+
+def _uninkable_char_error(field_name: str, value: str) -> str | None:
+    """Neither base-14 Helvetica nor the embedded Unicode fallback can ink
+    this character. Fail loud, not as a silently substituted '·'."""
     for ch in value:
-        try:
-            ch.encode("latin-1")
-            inkable = not (ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F)
-        except UnicodeEncodeError:
-            inkable = False
-        if not inkable:
+        code = ord(ch)
+        if code < 0x20 or 0x7F <= code <= 0x9F:
             return (
-                f"{field_name} contains '{ch}' (U+{ord(ch):04X}), which the "
-                f"form's base-14 Helvetica cannot ink — it would print as '·'"
+                f"{field_name} contains a control character (U+{code:04X}), "
+                f"which cannot be printed"
+            )
+        if code <= 0xFF:
+            continue  # Latin-1 — base-14 Helvetica inks this directly
+        if not _UNICODE_FONT.has_glyph(code):
+            return (
+                f"{field_name} contains '{ch}' (U+{code:04X}), which neither "
+                f"the form's base-14 Helvetica nor the embedded {UNICODE_FONT_NAME} "
+                f"fallback can ink — no glyph available for this character"
             )
     return None
 
@@ -762,7 +787,7 @@ def validate(
         items = val if isinstance(val, list) else [val]
         for item in items:
             if isinstance(item, str):
-                err = _latin1_error(key, item)
+                err = _uninkable_char_error(key, item)
                 if err:
                     errors.append(err)
 
@@ -856,11 +881,28 @@ def calculate_fee(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _fit(text: str, w: float, h: float, field_name: str = "") -> float:
+def _fit(
+    text: str, w: float, h: float, field_name: str = ""
+) -> tuple[float, str, str | None]:
+    """Largest size that fits, plus which font it fits in.
+
+    Latin-1 text stays on base-14 Helvetica — no embedding, smallest
+    output, the same font every existing sample and screenshot already
+    shows. Only text that actually needs it falls back to the embedded
+    Unicode font, measured through its own metrics (Helvetica's aren't
+    valid for a different typeface).
+    """
+    latin1 = _is_latin1(text)
     for size in FONT_SIZES:
-        tw = pymupdf.get_text_length(text, HELV, size)
+        tw = (
+            pymupdf.get_text_length(text, HELV, size)
+            if latin1
+            else _UNICODE_FONT.text_length(text, fontsize=size)
+        )
         if tw <= w - 4 and size <= h - 2:
-            return size
+            if latin1:
+                return size, HELV, None
+            return size, UNICODE_FONT_NAME, str(UNICODE_FONT_PATH)
     raise ValueError(
         f"{field_name}: '{text}' does not fit in {w:.0f}x{h:.0f}pt"
     )
@@ -947,13 +989,16 @@ def fill_final(
                 text = text_for(name, payload, as_of=as_of)
                 if not text:
                     continue
-                size = _fit(text, field_spec["w"], field_spec["h"], name)
+                size, fontname, fontfile = _fit(
+                    text, field_spec["w"], field_spec["h"], name
+                )
                 ascent = size * 0.8
                 y = field_spec["y"] + (field_spec["h"] + ascent) / 2 - 1
                 page.insert_text(
                     pymupdf.Point(field_spec["x"] + 2, y),
                     text,
-                    fontname=HELV,
+                    fontname=fontname,
+                    fontfile=fontfile,
                     fontsize=size,
                     color=(0, 0, 0),
                 )

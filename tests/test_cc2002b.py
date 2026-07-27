@@ -192,7 +192,30 @@ class CC2002BTests(unittest.TestCase):
             self.payload(spouse_a_name="Harold前 Baker"), as_of=AS_OF
         )
         self.assertFalse(result.valid)
-        self.assertTrue(any("latin" in e.lower() or "U+" in e for e in result.errors))
+        self.assertTrue(any("U+" in e for e in result.errors))
+
+    def test_emoji_is_still_rejected_by_the_unicode_fallback(self):
+        result = app.validate(
+            self.payload(spouse_a_name="Harold🙂 Baker"), as_of=AS_OF
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(any("U+1F642" in e for e in result.errors))
+
+    def test_non_latin1_names_fill_via_embedded_unicode_font(self):
+        payload = self.payload(
+            spouse_a_name="Nguyễn Thị Phương",
+            spouse_b_name="Łukasz Kowalski",
+            requester_name="Παπαδόπουλος",
+        )
+        result = app.validate(payload, as_of=AS_OF)
+        self.assertTrue(result.valid, result.errors)
+        with tempfile.TemporaryDirectory() as directory:
+            output, payload_path = self.fill(payload, directory)
+            checked = app.check_correctness(output, payload_path, as_of=AS_OF)
+            self.assertTrue(
+                checked["passed"],
+                [c for c in checked["checks"] if not c["passed"]],
+            )
 
     def test_form_type_other_is_rejected(self):
         result = app.validate(self.payload(form_type="other"), as_of=AS_OF)

@@ -92,7 +92,7 @@ state machine. rejects what a clerk should never receive:
 - year &lt; 1950 → municipal archives, not city clerk  
 - not exactly one form type / one sworn box  
 - relation / le inline text only when auth is 4 / 5  
-- latin-1 only (base-14 helvetica; no silent `·` substitution)  
+- inkable only — latin-1 stays on base-14 helvetica; broader names (Nguyễn, Łukasz, Παπαδόπουλος, Дмитрий) fall back to an embedded Unicode font (`fonts/DejaVuSans.ttf`, Bitstream Vera license — see `fonts/LICENSE_DEJAVU`); anything neither font can render (CJK, Arabic, emoji) fails loud with the exact character and codepoint, never a silent `·`  
 - text must fit the measured cell  
 - `form_type: other` → no price on schedule → refuse  
 
@@ -225,7 +225,10 @@ read top → bottom:
 
 ## two more weeks (not built)
 
-unicode font embed · property/mutation fuzz at scale · resolve `other` pricing with 311 · http wrapper around `fill_final`/`check_correctness` if a second consumer needs it (see [cli, not http — and why](#cli-not-http--and-why))
+property/mutation fuzz at scale · resolve `other` pricing with 311 · http wrapper around `fill_final`/`check_correctness` if a second consumer needs it (see [cli, not http — and why](#cli-not-http--and-why))
 
 ~~second renderer (pdfium) so mupdf does not grade itself alone~~ — built: layer c in step 6.
 ~~`measure` command for the next revision~~ — built: `--measure [blank.pdf] [--compare]`. Re-derives the field map from the page's own drawn table rules + label geometry — no hardcoded coordinates. Reproduces all 30 hand-approved fields within 1.2pt. Re-measuring a form revision is now "edit ~20 copy-pasted label strings," not "retype 80 coordinates." Still produces a *candidate* map only — `_FIELD_MAP` stays the hand-approved, fingerprint-gated source of truth for the hot path.
+~~unicode font embed~~ — built: names outside Latin-1 fall back to an embedded DejaVu Sans (Latin Extended, Cyrillic, Greek). CJK/Arabic/emoji still rejected loud, not silently substituted — different problem (shaping, bidi), intentionally out of scope.
+
+evaluated and rejected: pymupdf's built-in `page.find_tables()` as a replacement for the hand-rolled row-band detection in `--measure` — tested against the real form, not just the docs. see `docs/visuals/10_find_tables_evaluated_and_rejected.png`.
