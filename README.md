@@ -62,26 +62,17 @@ blank vs filled, same crop:
 full fill:
 ![filled](docs/visuals/07_filled_sol_lee.png)
 
-**8. the ai side — offline only, never in the hot path.**
-`tools/compile_form.py`: renders the blank, extracts the same word geometry as step 2, sends both to gpt-4o, gets back a candidate field map, draws an overlay, runs the same 3-layer checker against it as a test fill.
-
-ran it: 31 fields proposed, 86/86 checks passed. then timed it against the geometry path:
-
-| path | time |
-|---|---:|
-| `inspect_form.py` (geometry) | 0.3s |
-| `compile_form.py` (vision) | 138s |
-
-460x slower, zero accuracy gain — this form already has real vector geometry to read. said so in this readme instead of pretending otherwise. keeps the compiler around for the next form that's a pure scan.
-
-**9. review pass before calling it done.**
-ran it end to end like a pr review, found four real things, fixed them:
+**8. review pass before calling it done.**
+ran it end to end like a pr review, found three real things, fixed them:
 - pydantic's bare `date` type silently accepted epoch ints and full datetime strings → added a strict `YYYY-MM-DD`-only validator
 - cli would write a proof receipt even for a filing that failed its own check → now deletes the pdf and writes `.failed.json` instead
 - fee note wording implied a flat contradiction instead of describing the actual broad-then-specific structure → rewrote it
-- `compile_form.py`'s auto-verify patched the spec but not the blank path, so testing a different form would've silently verified against the wrong one → fixed
 
-added regression tests for both, regenerated the three outputs, reran everything.
+added regression tests, regenerated the three outputs, reran everything.
+
+## a second form
+
+out of scope on purpose, per the brief. but nothing here is CC2002B-specific except the spec it loads: coordinates, types, checkbox maps, a blank hash, all plain data in `cc2002b.spec.json`. onboarding a new form means measuring a new blank the same way `inspect_form.py` did this one, hand-reviewing the overlay, and freezing a new spec file. `cc2002b.py` itself wouldn't change.
 
 ## run it
 
@@ -122,7 +113,6 @@ pure function — json in, pdf + proof out. no auth, no sessions, nothing to kee
 
 ## next
 
-- multi-proposer loop: geometry + vision both propose, same checker grades both, human picks
 - cjk/arabic/rtl name support
 - property/mutation fuzz at scale
 - resolve `other` pricing with 311
