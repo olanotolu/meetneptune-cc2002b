@@ -43,8 +43,15 @@ output is one letter page (`612×792`), committed as `cc2002b_blank.pdf`.
 sha-256 (must match `FormSpec` or fill refuses):
 
 ```text
-f192ef937026ac99220d3f8816aa1b056dce5c32e6dc67c990e7dec6a309025f
+0a34ee8217e65105fa28d61f46a7af1cea585340a36238eb02da10796442ebca
 ```
+
+reproducible: `--extract-blank` passes `deterministic_id=True` to pikepdf's
+save, so re-running it against the packet always reproduces this exact
+hash. (It didn't always — pikepdf randomizes the PDF `/ID` trailer entry
+by default, so the same command produced a different hash on every call,
+even on the same machine with the same pinned version. Found by actually
+re-extracting and diffing, not by inspection.)
 
 ![blank filing surface](docs/visuals/01_blank_page2.png)
 

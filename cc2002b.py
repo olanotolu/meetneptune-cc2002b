@@ -81,7 +81,19 @@ DPI = 150 / 72           # checker raster scale (device pixels per point)
 # License: Bitstream Vera, freely redistributable — fonts/LICENSE_DEJAVU.
 UNICODE_FONT_NAME = "DejaVuSans"
 UNICODE_FONT_PATH = ROOT / "fonts" / "DejaVuSans.ttf"
-_UNICODE_FONT = pymupdf.Font(fontfile=str(UNICODE_FONT_PATH))
+
+_unicode_font_cache: pymupdf.Font | None = None
+
+
+def _unicode_font() -> pymupdf.Font:
+    """Lazy on purpose: a missing fonts/DejaVuSans.ttf should only break
+    commands that actually ink or validate non-Latin-1 text, not every
+    invocation of this file — a module-level pymupdf.Font(...) call would
+    take down --extract-blank and even `python cc2002b.py` with no args."""
+    global _unicode_font_cache
+    if _unicode_font_cache is None:
+        _unicode_font_cache = pymupdf.Font(fontfile=str(UNICODE_FONT_PATH))
+    return _unicode_font_cache
 
 # Raster thresholds (calibrated against measured forgeries, not vibes)
 _DARK = 128
@@ -274,10 +286,12 @@ CC2002B_2016 = FormSpec(
     revision="9/20/2016",
     version="1.0.0",
     # Must match hashlib.sha256(cc2002b_blank.pdf).hexdigest() exactly.
-    # Confirmed at submit time: f192ef937026ac99220d3f8816aa1b056dce5c32e6…
+    # Re-extracted with deterministic_id=True (see extract_blank) so this
+    # hash is reproducible from the packet, not just from this one file.
+    # Confirmed at submit time: 0a34ee8217e65105fa28d61f46a7af1cea585340a3…
     fingerprint=FormFingerprint(
         sha256=(
-            "f192ef937026ac99220d3f8816aa1b056dce5c32e6dc67c990e7dec6a309025f"
+            "0a34ee8217e65105fa28d61f46a7af1cea585340a36238eb02da10796442ebca"
         ),
         page_count=1,
         page_size=(612.0, 792.0),
@@ -416,7 +430,7 @@ def _uninkable_char_error(field_name: str, value: str) -> str | None:
             )
         if code <= 0xFF:
             continue  # Latin-1 — base-14 Helvetica inks this directly
-        if not _UNICODE_FONT.has_glyph(code):
+        if not _unicode_font().has_glyph(code):
             return (
                 f"{field_name} contains '{ch}' (U+{code:04X}), which neither "
                 f"the form's base-14 Helvetica nor the embedded {UNICODE_FONT_NAME} "
@@ -897,7 +911,7 @@ def _fit(
         tw = (
             pymupdf.get_text_length(text, HELV, size)
             if latin1
-            else _UNICODE_FONT.text_length(text, fontsize=size)
+            else _unicode_font().text_length(text, fontsize=size)
         )
         if tw <= w - 4 and size <= h - 2:
             if latin1:
@@ -1552,7 +1566,18 @@ def check_correctness(
 
 
 def extract_blank(packet_path: str | Path, out_path: str | Path, page: int = 2) -> Path:
-    """Extract one page (1-based) from the assessment packet into a blank form."""
+    """Extract one page (1-based) from the assessment packet into a blank form.
+
+    pikepdf.Pdf.save() randomizes the /ID trailer entry by default — the
+    same input, same pinned pikepdf version, produced a DIFFERENT SHA-256
+    on every single call (confirmed: two consecutive extractions differed,
+    even though the actual page content — words, drawings, page size —
+    was byte-identical). Since the fingerprint gate hashes this file,
+    that made "re-extract the blank" fail the gate nondeterministically,
+    which defeats the point of a reproducibility check. deterministic_id
+    derives /ID from content instead of randomness, so re-extracting the
+    same packet always reproduces the same registered hash.
+    """
     import pikepdf
 
     packet_path = Path(packet_path)
@@ -1565,7 +1590,7 @@ def extract_blank(packet_path: str | Path, out_path: str | Path, page: int = 2) 
         dst = pikepdf.Pdf.new()
         dst.pages.append(src.pages[page - 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        dst.save(out_path)
+        dst.save(out_path, deterministic_id=True)
     return out_path
 
 
@@ -1587,7 +1612,14 @@ def extract_blank(packet_path: str | Path, out_path: str | Path, page: int = 2) 
 # is a regression check that the rules still reproduce the approved one.
 # ═══════════════════════════════════════════════════════════════════════════
 
-_PAD = 2.0
+# Named distinctly from the checker's _PAD (device-pixel tolerance in
+# _devbox, section 8) — same short name, different unit, different job.
+# They collided as one _PAD for a while: the module-level reassignment
+# here silently overwrote the checker's value at import time, since
+# Python resolves globals at call time, not definition time. Harmless in
+# practice (both were small positive pads), but exactly the kind of
+# quietly-wrong constant a checker can't afford.
+_MEASURE_PAD = 2.0
 _RIGHT_MARGIN = 557.56
 _ROW_MIN_WIDTH = 400.0  # separates real table rows from incidental short rules (e.g. the sig line)
 
@@ -1790,12 +1822,12 @@ def measure_blank(blank_path: Path = BLANK) -> dict[str, dict[str, Any]]:
             left = _resolve_lr(words, a.left, band)
             right = _resolve_lr(words, a.right, band)
             if a.kind == "inline":
-                x0, y0 = left[2] + _PAD, band[0] + _PAD
-                y1 = band[1] - _PAD
+                x0, y0 = left[2] + _MEASURE_PAD, band[0] + _MEASURE_PAD
+                y1 = band[1] - _MEASURE_PAD
             else:  # stacked
-                x0, y0 = left[0], left[3] + _PAD
-                y1 = band[1] - _PAD
-            x1 = (right[0] - _PAD) if right is not None else _RIGHT_MARGIN
+                x0, y0 = left[0], left[3] + _MEASURE_PAD
+                y1 = band[1] - _MEASURE_PAD
+            x1 = (right[0] - _MEASURE_PAD) if right is not None else _RIGHT_MARGIN
             out[a.name] = {
                 "x": round(x0, 2), "y": round(y0, 2),
                 "w": round(x1 - x0, 2), "h": round(y1 - y0, 2),
