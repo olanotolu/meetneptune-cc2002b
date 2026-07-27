@@ -7,38 +7,10 @@
 #   "pydantic==2.11.9",
 # ]
 # ///
-"""cc2002b.py — NYC Form CC2002B: a deterministic filing engine.
+"""NYC Form CC2002B — deterministic filing engine.
 
-Journey (matches the assessment packet end-to-end)
---------------------------------------------------
-  Step 0  Read packet: brief | form | fees  (3 pages)
-  Step 1  Extract page 2 → 00_packet/cc2002b_blank.pdf   (--extract-blank / §9)
-  Step 2  Approved field map + fingerprint               (§1, cc2002b.spec.json)
-          Coordinates were measured once, offline, with human sign-off —
-          see tools/inspect_form.py and evidence/. The shipped engine only
-          ever reads the already-approved spec; it never re-derives it.
-  Step 3  Accept structured JSON (strict Pydantic models) (§1, samples/)
-  Step 4  Validate (reject clerk-kicks)                  (§4)
-  Step 5  Fee policy (ambiguity visible)                 (§5)
-  Step 6  Draw flat black ink; no signature              (§6)
-  Step 7  Proof receipt + reopen-and-prove                (§7, §8)
-  Step 8  Evidence: outputs/ + tests/ + evidence/
-
-Thesis
-------
-Do not build an "AI form filler." Build an AI-compiled, deterministic filing
-engine.
-
-Use judgment (and AI, offline) where uncertainty lives: understanding a new
-form. Once a form version is approved, no model decides where legal information
-goes. The hot path is:
-
-    JSON → strict schema → validate (state machine) → fingerprint gate
-        → flat black ink → atomic PDF + proof receipt → reopen and prove
-
-If the city revises the form, this program refuses to guess. A new
-cc2002b.spec.json is activated only after measurement, adversarial tests, and
-human approval.
+JSON → strict schema → validate → fingerprint gate → flat black ink →
+atomic PDF + proof receipt → reopen and prove.
 
 Usage
 -----
@@ -46,9 +18,7 @@ Usage
     python cc2002b.py --check filled.pdf payload.json [report.json]
     python cc2002b.py --extract-blank packet.pdf cc2002b_blank.pdf
 
-Dependencies are pinned here (PEP 723) and in requirements.txt. Same pins.
-The blank form is 00_packet/cc2002b_blank.pdf (packet page 2), alongside the
-source packet itself — both step-0 artifacts live together.
+Dependencies pinned here (PEP 723) and in requirements.txt. Same pins.
 """
 
 from __future__ import annotations
