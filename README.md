@@ -107,6 +107,8 @@ python -m unittest discover -s tests -v
 
 dates are `YYYY-MM-DD`, nothing else. `"May 30, 2025"`, `0`, `"2025-05-30T00:00:00"` all bounce at the schema layer.
 
+inbound question came in: Sol Lee asked whether the form should accept month names/abbreviations (`"May"`, `"may"`) and normalize them to the numeric value, instead of forcing a strict integer inside the iso string. asked the cto, answer was "it can stay strict." that's what shipped — no name/abbreviation parsing anywhere on intake, `IsoDate` rejects all of it, the only place a month *name* ever appears is on the printed pdf itself, converted from the already-validated integer for display, not accepted as input.
+
 ## why cli, not http
 
 pure function — json in, pdf + proof out. no auth, no sessions, nothing to keep alive. `fill_final`/`check_correctness` are already transport-agnostic if a real service boundary shows up later.
