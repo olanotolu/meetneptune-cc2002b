@@ -2,3 +2,5 @@
 PyMuPDF==1.26.6
 pikepdf==8.7.1
 pypdfium2==5.9.0
+pydantic==2.11.9
+openai>=1.0.0    # tools/compile_form.py only — not a hot-path dependency

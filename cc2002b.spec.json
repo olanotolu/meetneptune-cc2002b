@@ -1,0 +1,62 @@
+{
+  "form_id": "CC2002B",
+  "revision": "9/20/2016",
+  "version": "1.0.0",
+  "blank_sha256": "0a34ee8217e65105fa28d61f46a7af1cea585340a36238eb02da10796442ebca",
+  "page_count": 1,
+  "page_size": [612.0, 792.0],
+  "acroform_expected": false,
+  "anchors": [
+    "MAIL REQUEST FOR MARRIAGE RECORDS",
+    "CHECK ONE BOX ONLY",
+    "Signature (DO NOT PRINT)",
+    "FORM CC2002B 9/20/2016"
+  ],
+  "protected": ["signature", "signature_date"],
+  "form_checkboxes": {
+    "short": "form_short",
+    "extended": "form_extended",
+    "other": "form_other"
+  },
+  "authorization_checkboxes": {
+    "party": "auth_checkbox_1",
+    "written_authorization": "auth_checkbox_2",
+    "attorney": "auth_checkbox_3",
+    "relation": "auth_checkbox_4",
+    "law_enforcement": "auth_checkbox_5"
+  },
+  "fields": {
+    "month": {"x": 177.43, "y": 289.16, "w": 70.77, "h": 28.52, "type": "text", "fill": true},
+    "day": {"x": 270.56, "y": 289.16, "w": 42.56, "h": 28.52, "type": "text", "fill": true},
+    "year": {"x": 337.28, "y": 289.16, "w": 74.0, "h": 28.52, "type": "text", "fill": true},
+    "license_was_issued": {"x": 489.78, "y": 289.16, "w": 67.78, "h": 28.52, "type": "text", "fill": true},
+    "if_uncertain_specify_other_years_you_want_searched": {"x": 250.74, "y": 321.68, "w": 160.9, "h": 19.04, "type": "text", "fill": true},
+    "license_no": {"x": 461.56, "y": 321.68, "w": 96.0, "h": 19.04, "type": "text", "fill": true},
+    "full_legal_name_before_marriage": {"x": 183.79, "y": 344.72, "w": 268.64, "h": 24.8, "type": "text", "fill": true},
+    "date": {"x": 474.91, "y": 344.72, "w": 82.65, "h": 24.8, "type": "text", "fill": true},
+    "full_legal_name_before_marriage_09": {"x": 184.03, "y": 373.52, "w": 268.4, "h": 24.08, "type": "text", "fill": true},
+    "date_10": {"x": 474.91, "y": 373.52, "w": 82.65, "h": 24.08, "type": "text", "fill": true},
+    "reason_search_copy_are_needed": {"x": 192.15, "y": 401.6, "w": 157.57, "h": 24.92, "type": "text", "fill": true},
+    "number_of_copies_requested": {"x": 468.51, "y": 401.6, "w": 89.05, "h": 24.92, "type": "text", "fill": true},
+    "name_of_person_requesting_search": {"x": 52.2, "y": 441.83, "w": 165.76, "h": 12.65, "type": "text", "fill": true},
+    "your_relationship_to_either_spouse": {"x": 219.96, "y": 441.83, "w": 182.2, "h": 12.65, "type": "text", "fill": true},
+    "your_telephone_no": {"x": 404.16, "y": 441.83, "w": 153.4, "h": 12.65, "type": "text", "fill": true},
+    "street": {"x": 161.88, "y": 470.39, "w": 127.12, "h": 23.93, "type": "text", "fill": true},
+    "apt_no": {"x": 291.0, "y": 470.39, "w": 53.44, "h": 23.93, "type": "text", "fill": true},
+    "city": {"x": 346.44, "y": 470.39, "w": 106.0, "h": 23.93, "type": "text", "fill": true},
+    "state": {"x": 454.44, "y": 470.39, "w": 29.44, "h": 23.93, "type": "text", "fill": true},
+    "zip_code": {"x": 485.88, "y": 470.39, "w": 71.68, "h": 23.93, "type": "text", "fill": true},
+    "form_short": {"x": 53.64, "y": 47.47, "w": 8.86, "h": 9.99, "type": "checkbox", "fill": true},
+    "form_extended": {"x": 53.88, "y": 59.21, "w": 8.87, "h": 11.06, "type": "checkbox", "fill": true},
+    "form_other": {"x": 53.64, "y": 72.29, "w": 9.35, "h": 11.06, "type": "checkbox", "fill": true},
+    "auth_checkbox_1": {"x": 84.96, "y": 550.21, "w": 12.56, "h": 12.0, "type": "checkbox", "fill": true},
+    "auth_checkbox_2": {"x": 84.96, "y": 561.85, "w": 12.56, "h": 12.0, "type": "checkbox", "fill": true},
+    "auth_checkbox_3": {"x": 85.2, "y": 583.93, "w": 12.56, "h": 12.0, "type": "checkbox", "fill": true},
+    "auth_checkbox_4": {"x": 84.96, "y": 603.61, "w": 12.02, "h": 12.0, "type": "checkbox", "fill": true},
+    "auth_checkbox_5": {"x": 84.96, "y": 626.53, "w": 10.55, "h": 12.0, "type": "checkbox", "fill": true},
+    "auth_relation": {"x": 155.89, "y": 603.61, "w": 47.11, "h": 12.0, "type": "text", "fill": true, "sizes": [10, 9, 8, 7, 6]},
+    "auth_other_agency": {"x": 249.36, "y": 626.53, "w": 67.64, "h": 12.0, "type": "text", "fill": true, "sizes": [10, 9, 8, 7, 6]},
+    "signature": {"x": 80.32, "y": 674.36, "w": 190.28, "h": 18.0, "type": "line", "fill": false},
+    "signature_date": {"x": 397.68, "y": 664.31, "w": 120.14, "h": 12.64, "type": "text", "fill": false}
+  }
+}

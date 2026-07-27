@@ -1,26 +1,24 @@
 {
-  "form_type": "short",
-  "month": 12,
-  "day": 1,
-  "year": 2020,
-  "borough": "Brooklyn",
-  "license_no": "K-2020-8127",
-  "years_searched": [],
-  "spouse_a_name": "Taylor Morgan",
-  "spouse_a_birth_date": "01/17/1987",
-  "spouse_b_name": "Jordan Rivera",
-  "spouse_b_birth_date": "08/03/1988",
-  "reason_search_copy_needed": "Official investigation",
-  "number_of_copies_requested": 1,
+  "certificate_type": "short",
+  "marriage": {
+    "date": "2020-12-01",
+    "borough": "Brooklyn",
+    "license_no": "K-2020-8127",
+    "additional_search_years": []
+  },
+  "spouse_a": {"name": "Taylor Morgan", "birth_date": "1987-01-17"},
+  "spouse_b": {"name": "Jordan Rivera", "birth_date": "1988-08-03"},
+  "reason": "Official investigation",
+  "copies": 1,
   "requester_name": "Avery Chen",
-  "relationship": "Law enforcement",
-  "phone": "718-555-0142",
-  "street": "1 Police Plaza",
-  "apt": "",
-  "city": "New York",
-  "state": "NY",
-  "zip_code": "10038",
-  "auth_checkbox": 5,
-  "auth_relation": "",
-  "auth_other_agency": "NYPD"
+  "requester_relationship": "Law enforcement",
+  "telephone": "718-555-0142",
+  "address": {
+    "street": "1 Police Plaza",
+    "apartment": null,
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10038"
+  },
+  "authorization": {"kind": "law_enforcement", "agency_or_title": "NYPD"}
 }

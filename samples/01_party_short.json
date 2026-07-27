@@ -1,26 +1,24 @@
 {
-  "form_type": "short",
-  "month": 5,
-  "day": 30,
-  "year": 2025,
-  "borough": "Manhattan",
-  "license_no": "B-2025-4994",
-  "years_searched": [],
-  "spouse_a_name": "Sol Lee",
-  "spouse_a_birth_date": "July 29, 1991",
-  "spouse_b_name": "Ronald William Caspers II",
-  "spouse_b_birth_date": "October 27, 1992",
-  "reason_search_copy_needed": "Name change",
-  "number_of_copies_requested": 1,
+  "certificate_type": "short",
+  "marriage": {
+    "date": "2025-05-30",
+    "borough": "Manhattan",
+    "license_no": "B-2025-4994",
+    "additional_search_years": []
+  },
+  "spouse_a": {"name": "Sol Lee", "birth_date": "1991-07-29"},
+  "spouse_b": {"name": "Ronald William Caspers II", "birth_date": "1992-10-27"},
+  "reason": "Name change",
+  "copies": 1,
   "requester_name": "Sol Lee",
-  "relationship": "Spouse",
-  "phone": "603-380-3923",
-  "street": "176 8th Street",
-  "apt": "2",
-  "city": "Brooklyn",
-  "state": "NY",
-  "zip_code": "11215",
-  "auth_checkbox": 1,
-  "auth_relation": "",
-  "auth_other_agency": ""
+  "requester_relationship": "Spouse",
+  "telephone": "603-380-3923",
+  "address": {
+    "street": "176 8th Street",
+    "apartment": "2",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip_code": "11215"
+  },
+  "authorization": {"kind": "party"}
 }

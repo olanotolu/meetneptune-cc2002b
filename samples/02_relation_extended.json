@@ -1,26 +1,24 @@
 {
-  "form_type": "extended",
-  "month": 6,
-  "day": 14,
-  "year": 1960,
-  "borough": "Queens",
-  "license_no": "Q-1960-1234",
-  "years_searched": [1959, 1961, 1962],
-  "spouse_a_name": "Alexandra Johnson",
-  "spouse_a_birth_date": "03/09/1938",
-  "spouse_b_name": "Christopher O'Connell",
-  "spouse_b_birth_date": "11/21/1936",
-  "reason_search_copy_needed": "Foreign jurisdiction",
-  "number_of_copies_requested": 2,
+  "certificate_type": "extended",
+  "marriage": {
+    "date": "1960-06-14",
+    "borough": "Queens",
+    "license_no": "Q-1960-1234",
+    "additional_search_years": [1959, 1961, 1962]
+  },
+  "spouse_a": {"name": "Alexandra Johnson", "birth_date": "1938-03-09"},
+  "spouse_b": {"name": "Christopher O'Connell", "birth_date": "1936-11-21"},
+  "reason": "Foreign jurisdiction",
+  "copies": 2,
   "requester_name": "Morgan Johnson",
-  "relationship": "Child",
-  "phone": "(212) 555-0188",
-  "street": "31 Chambers Street",
-  "apt": "",
-  "city": "New York",
-  "state": "NY",
-  "zip_code": "10007",
-  "auth_checkbox": 4,
-  "auth_relation": "child",
-  "auth_other_agency": ""
+  "requester_relationship": "Child",
+  "telephone": "(212) 555-0188",
+  "address": {
+    "street": "31 Chambers Street",
+    "apartment": null,
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10007"
+  },
+  "authorization": {"kind": "relation", "relation": "child"}
 }

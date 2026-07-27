@@ -1,14 +1,15 @@
 {
   "template_hash": "0a34ee8217e65105fa28d61f46a7af1cea585340a36238eb02da10796442ebca",
   "form_spec_version": "CC2002B@9/20/2016#1.0.0",
-  "input_hash": "3adaba0a0779a2dfb0f9acc71db940e874a145e77ca014a7a31b5fffffafe716",
-  "output_hash": "038eb5cf1f9577209c6ae9f38127687356add565bc25b8116759b3e3a8506464",
+  "input_hash": "137abbc9c36ea75cc54336c77952b3c64793a78e5f42ffd2d01768fa9e685ac8",
+  "output_hash": "939ecfe2e76669af341039227fb40acf7b2ca4b22638d6e7401aaa64dfaee001",
   "renderer": {
     "engine": "mupdf",
     "pymupdf": "1.26.6"
   },
   "verification_engines": [
-    "mupdf"
+    "mupdf",
+    "pdfium"
   ],
   "fee": {
     "total": 15.0,
@@ -25,7 +26,7 @@
     "fee_status": "resolved"
   },
   "notes": [
-    "auth_checkbox=5 on a record 5 years old (under 50) is not automatic release: the form marks this option '(LAW ENFORCEMENT PERSONNEL ONLY)' and requires that 'the marriage record will be used for a proper purpose', so expect the City Clerk to verify the requester's authority."
+    "authorization=law_enforcement on a record 5 years old (under 50) is not automatic release: the form marks this option '(LAW ENFORCEMENT PERSONNEL ONLY)' and requires that 'the marriage record will be used for a proper purpose', so expect the City Clerk to verify the requester's authority."
   ],
   "checks_passed": 114,
   "checks_failed": 0,

@@ -2,6 +2,14 @@
 
 Named checks must fail for named forgeries. A check that only says "failed"
 is ceremonial.
+
+Two layers can now reject a bad payload: schema (Application/Authorization —
+wrong type, missing required field, unknown authorization kind, a leaked
+field on the wrong sworn-statement variant) and business rules (validate() —
+a real date before 1950, a name that doesn't fit the printed box). Each test
+below exercises exactly one of those layers; which one is the point of the
+test, not an implementation detail, so assertRejectsAtSchema/AtValidate make
+that explicit instead of leaving it implicit in which exception type shows up.
 """
 
 from __future__ import annotations
@@ -28,18 +36,42 @@ class CC2002BTests(unittest.TestCase):
         cls.party_path = SAMPLES / "01_party_short.json"
         cls.party = json.loads(cls.party_path.read_text())
 
-    def payload(self, **updates):
+    def build(self, **overrides):
+        """Deep-copy the party sample and merge overrides one level deep, so
+        e.g. build(marriage={"year": 1949}) keeps every other marriage key."""
         candidate = copy.deepcopy(self.party)
-        candidate.update(updates)
+        for key, value in overrides.items():
+            if isinstance(value, dict) and isinstance(candidate.get(key), dict):
+                candidate[key] = {**candidate[key], **value}
+            else:
+                candidate[key] = value
         return candidate
 
-    def fill(self, payload, directory, name="filled.pdf"):
-        result = app.validate(payload, as_of=AS_OF)
+    def app_from(self, payload_dict: dict) -> app.Application:
+        return app.Application.model_validate(payload_dict)
+
+    def assertRejectsAtSchema(self, payload_dict, msg_substr=None):
+        with self.assertRaises(app.ValidationError) as ctx:
+            self.app_from(payload_dict)
+        if msg_substr:
+            self.assertIn(msg_substr, str(ctx.exception))
+        return ctx.exception
+
+    def assertRejectsAtValidate(self, payload_dict, msg_substr=None):
+        result = app.validate(self.app_from(payload_dict), as_of=AS_OF)
+        self.assertFalse(result.valid)
+        if msg_substr:
+            self.assertTrue(any(msg_substr in e for e in result.errors))
+        return result
+
+    def fill(self, payload_dict, directory, name="filled.pdf"):
+        app_obj = self.app_from(payload_dict)
+        result = app.validate(app_obj, as_of=AS_OF)
         self.assertTrue(result.valid, result.errors)
         output = Path(directory) / name
-        app.fill_final(payload, output, as_of=AS_OF)
+        app.fill_final(app.form_values(app_obj), output, as_of=AS_OF)
         payload_path = Path(directory) / f"{Path(name).stem}.json"
-        payload_path.write_text(json.dumps(payload))
+        payload_path.write_text(json.dumps(payload_dict))
         return output, payload_path
 
     def test_blank_is_one_page_no_acroform(self):
@@ -49,7 +81,7 @@ class CC2002BTests(unittest.TestCase):
         blank.close()
 
     def test_packet_is_three_pages_when_present(self):
-        packet = ROOT / "neptune-takehome-form-fill-packet (7).pdf"
+        packet = ROOT / "00_packet" / "neptune-takehome-form-fill-packet (7).pdf"
         if not packet.exists():
             self.skipTest("packet PDF not in workspace")
         doc = pymupdf.open(str(packet))
@@ -58,67 +90,83 @@ class CC2002BTests(unittest.TestCase):
 
     def test_approved_fingerprint_resolves(self):
         spec = app.resolve_form_spec(app.BLANK)
-        self.assertEqual(spec.form_id, "CC2002B")
-        self.assertEqual(spec.fingerprint.sha256, app.EXPECTED_BLANK_SHA256)
+        self.assertEqual(spec["form_id"], "CC2002B")
+        self.assertEqual(spec["blank_sha256"], app.SPEC["blank_sha256"])
 
     def test_party_payload_is_valid(self):
-        self.assertTrue(app.validate(self.party, as_of=AS_OF).valid)
+        self.assertTrue(app.validate(self.app_from(self.party), as_of=AS_OF).valid)
 
-    def test_month_is_strict_integer_only(self):
-        """CTO: strict intake — integers 1–12 only; still ink English name."""
-        as_int = app.validate(self.payload(month=5), as_of=AS_OF)
-        as_name = app.validate(self.payload(month="May"), as_of=AS_OF)
-        as_str_num = app.validate(self.payload(month="5"), as_of=AS_OF)
-        as_bool = app.validate(self.payload(month=True), as_of=AS_OF)
-        as_bad = app.validate(self.payload(month=13), as_of=AS_OF)
-        self.assertTrue(as_int.valid, as_int.errors)
-        self.assertFalse(as_name.valid)
-        self.assertFalse(as_str_num.valid)
-        self.assertFalse(as_bool.valid)
-        self.assertFalse(as_bad.valid)
-        self.assertTrue(any("integer 1–12" in e for e in as_name.errors))
-        self.assertEqual(
-            app.text_for("month", self.payload(month=5), as_of=AS_OF),
-            "May",
+    def test_marriage_date_is_strict_iso_only(self):
+        """CTO's 'strict month' rule generalizes to the whole date: a real
+        ISO calendar date can't carry a month name or an out-of-range month
+        in the first place, so there's nothing left to range-check — still
+        ink English month name from the parsed date."""
+        as_iso = app.validate(
+            self.app_from(self.build(marriage={"date": "2025-05-30"})), as_of=AS_OF
         )
+        self.assertTrue(as_iso.valid, as_iso.errors)
+
+        # Wrong shape entirely, or a real date but with an invalid calendar
+        # value — Pydantic's date type rejects both the same way.
+        for bad_date in ("May 30, 2025", "05/30/2025", 20250530, True, "2025-13-40"):
+            self.assertRejectsAtSchema(self.build(marriage={"date": bad_date}))
+
+        flat = app.form_values(
+            self.app_from(self.build(marriage={"date": "2025-05-30"}))
+        )
+        self.assertEqual(app.text_for("month", flat, as_of=AS_OF), "May")
+
+    def test_boolean_date_and_copies_are_rejected_by_strict_schema(self):
+        # Plain (non-strict) Pydantic int fields silently coerce True -> 1 —
+        # Field(strict=True) is what keeps that from reintroducing the
+        # laxness the original _require_int explicitly guarded against.
+        # date itself is a native Pydantic type, not an int, so a bare bool
+        # is rejected as the wrong type outright, same effect.
+        self.assertRejectsAtSchema(self.build(marriage={"date": True}))
+        self.assertRejectsAtSchema(self.build(copies=True))
 
     def test_blank_hash_matches_formspec(self):
         import hashlib
 
         digest = hashlib.sha256(app.BLANK.read_bytes()).hexdigest()
-        self.assertEqual(digest, app.EXPECTED_BLANK_SHA256)
-        self.assertEqual(digest, app.CC2002B_2016.fingerprint.sha256)
-        self.assertIn(digest, app.APPROVED_FORMS)
+        self.assertEqual(digest, app.SPEC["blank_sha256"])
 
     def test_pre_1950_is_rejected(self):
-        result = app.validate(self.payload(year=1949), as_of=AS_OF)
-        self.assertFalse(result.valid)
-        self.assertTrue(any("before 1950" in error for error in result.errors))
-
-    def test_duplicate_auth_is_rejected_without_crashing(self):
-        result = app.validate(self.payload(auth_checkbox=[1, 2]), as_of=AS_OF)
-        self.assertFalse(result.valid)
-        self.assertTrue(any("integer 1-5" in error for error in result.errors))
-
-    def test_missing_auth_is_rejected(self):
-        result = app.validate(self.payload(auth_checkbox=None), as_of=AS_OF)
-        self.assertFalse(result.valid)
-        self.assertTrue(
-            any("auth_checkbox is required" in error for error in result.errors)
+        self.assertRejectsAtValidate(
+            self.build(marriage={"date": "1949-05-30"}), msg_substr="before 1950"
         )
 
-    def test_relation_is_required_only_for_option_four(self):
-        missing = app.validate(
-            self.payload(auth_checkbox=4, auth_relation=""), as_of=AS_OF
+    def test_unknown_authorization_kind_is_rejected_by_schema(self):
+        # Structurally impossible to "pick two" now — there's exactly one
+        # authorization object, discriminated by a Literal kind. An unknown
+        # kind is a schema rejection, not a "duplicate selection" business
+        # rule the old scalar auth_checkbox needed custom code to catch.
+        self.assertRejectsAtSchema(self.build(authorization={"kind": "both"}))
+
+    def test_missing_authorization_is_rejected_by_schema(self):
+        payload = self.build()
+        del payload["authorization"]
+        self.assertRejectsAtSchema(payload)
+
+    def test_relation_is_required_only_for_relation_kind(self):
+        # missing
+        self.assertRejectsAtSchema(
+            self.build(authorization={"kind": "relation"})
         )
-        leaked = app.validate(
-            self.payload(auth_checkbox=1, auth_relation="child"), as_of=AS_OF
+        # blank
+        self.assertRejectsAtSchema(
+            self.build(authorization={"kind": "relation", "relation": ""})
+        )
+        # leaked onto a variant that shouldn't carry it (extra="forbid")
+        self.assertRejectsAtSchema(
+            self.build(authorization={"kind": "party", "relation": "child"})
         )
         valid = app.validate(
-            self.payload(auth_checkbox=4, auth_relation="child"), as_of=AS_OF
+            self.app_from(
+                self.build(authorization={"kind": "relation", "relation": "child"})
+            ),
+            as_of=AS_OF,
         )
-        self.assertFalse(missing.valid)
-        self.assertFalse(leaked.valid)
         self.assertTrue(valid.valid, valid.errors)
 
     def test_longer_relation_words_fit_via_the_inline_blank_size_floor(self):
@@ -128,8 +176,10 @@ class CC2002BTests(unittest.TestCase):
         # at the 8pt floor every other field uses would be refusing valid
         # input. A human filling this by hand would just write smaller.
         for relation in ("granddaughter", "step-daughter"):
-            payload = self.payload(auth_checkbox=4, auth_relation=relation)
-            result = app.validate(payload, as_of=AS_OF)
+            payload = self.build(
+                authorization={"kind": "relation", "relation": relation}
+            )
+            result = app.validate(self.app_from(payload), as_of=AS_OF)
             self.assertTrue(result.valid, (relation, result.errors))
             with tempfile.TemporaryDirectory() as directory:
                 output, payload_path = self.fill(payload, directory)
@@ -141,85 +191,106 @@ class CC2002BTests(unittest.TestCase):
 
         # the floor has a bottom too — this doesn't fit even at 6pt
         too_long = app.validate(
-            self.payload(auth_checkbox=4, auth_relation="great-granddaughter"),
+            self.app_from(
+                self.build(
+                    authorization={
+                        "kind": "relation",
+                        "relation": "great-granddaughter",
+                    }
+                )
+            ),
             as_of=AS_OF,
         )
         self.assertFalse(too_long.valid)
         self.assertTrue(any("does not fit" in e for e in too_long.errors))
 
-    def test_agency_is_required_only_for_option_five(self):
-        missing = app.validate(
-            self.payload(auth_checkbox=5, auth_other_agency=""), as_of=AS_OF
+    def test_agency_is_required_only_for_law_enforcement_kind(self):
+        self.assertRejectsAtSchema(
+            self.build(authorization={"kind": "law_enforcement"})
         )
-        leaked = app.validate(
-            self.payload(auth_checkbox=1, auth_other_agency="NYPD"), as_of=AS_OF
+        self.assertRejectsAtSchema(
+            self.build(
+                authorization={"kind": "law_enforcement", "agency_or_title": ""}
+            )
+        )
+        self.assertRejectsAtSchema(
+            self.build(authorization={"kind": "party", "agency_or_title": "NYPD"})
         )
         valid = app.validate(
-            self.payload(auth_checkbox=5, auth_other_agency="NYPD"), as_of=AS_OF
+            self.app_from(
+                self.build(
+                    authorization={
+                        "kind": "law_enforcement",
+                        "agency_or_title": "NYPD",
+                    }
+                )
+            ),
+            as_of=AS_OF,
         )
-        self.assertFalse(missing.valid)
-        self.assertFalse(leaked.valid)
         self.assertTrue(valid.valid, valid.errors)
 
-    def test_birth_dates_are_required_and_parsed(self):
-        missing = app.validate(
-            self.payload(spouse_a_birth_date=""), as_of=AS_OF
+    def test_birth_dates_must_be_iso_dates(self):
+        # Presence and calendar validity are schema concerns now — a blank,
+        # a non-date word, or a written month are all the wrong shape, not
+        # a business-rule rejection.
+        self.assertRejectsAtSchema(self.build(spouse_a={"birth_date": ""}))
+        self.assertRejectsAtSchema(self.build(spouse_b={"birth_date": "tomorrow"}))
+        self.assertRejectsAtSchema(
+            self.build(spouse_a={"birth_date": "July 29, 1991"})
         )
-        malformed = app.validate(
-            self.payload(spouse_b_birth_date="tomorrow"), as_of=AS_OF
+        valid = app.validate(
+            self.app_from(self.build(spouse_a={"birth_date": "1991-07-29"})),
+            as_of=AS_OF,
         )
-        written = app.validate(
-            self.payload(spouse_a_birth_date="July 29, 1991"), as_of=AS_OF
-        )
-        self.assertFalse(missing.valid)
-        self.assertFalse(malformed.valid)
-        self.assertTrue(written.valid, written.errors)
+        self.assertTrue(valid.valid, valid.errors)
+
+    def test_birth_date_in_the_future_is_a_business_rule(self):
+        future = date(AS_OF.year + 1, 1, 1).isoformat()
+        self.assertRejectsAtValidate(self.build(spouse_b={"birth_date": future}))
 
     def test_relationship_is_required(self):
-        result = app.validate(self.payload(relationship=""), as_of=AS_OF)
-        self.assertFalse(result.valid)
-        self.assertTrue(any("relationship" in error for error in result.errors))
+        self.assertRejectsAtValidate(
+            self.build(requester_relationship=""), msg_substr="relationship"
+        )
 
     def test_borough_and_state_are_constrained(self):
-        bad_borough = app.validate(self.payload(borough="Mars"), as_of=AS_OF)
-        bad_state = app.validate(self.payload(state="ZZ"), as_of=AS_OF)
+        bad_borough = app.validate(
+            self.app_from(self.build(marriage={"borough": "Mars"})), as_of=AS_OF
+        )
+        bad_state = app.validate(
+            self.app_from(self.build(address={"state": "ZZ"})), as_of=AS_OF
+        )
         self.assertFalse(bad_borough.valid)
         self.assertFalse(bad_state.valid)
 
     def test_search_year_list_is_both_inked_and_billed(self):
-        payload = self.payload(years_searched=[2023, 2024])
-        result = app.validate(payload, as_of=AS_OF)
+        payload = self.build(marriage={"additional_search_years": [2023, 2024]})
+        app_obj = self.app_from(payload)
+        result = app.validate(app_obj, as_of=AS_OF)
         self.assertTrue(result.valid, result.errors)
         self.assertEqual(result.fee["breakdown"]["years_searched"], 3)
+        flat = app.form_values(app_obj)
         self.assertEqual(
             app.text_for(
                 "if_uncertain_specify_other_years_you_want_searched",
-                payload,
+                flat,
                 as_of=AS_OF,
             ),
             "2023, 2024",
         )
 
-    def test_conflicting_year_representations_are_rejected(self):
-        result = app.validate(
-            self.payload(years_searched=[2023], years_searched_text="2024"),
-            as_of=AS_OF,
-        )
-        self.assertFalse(result.valid)
-        self.assertTrue(any("disagree" in error for error in result.errors))
-
     def test_text_overflow_is_a_validation_error(self):
-        result = app.validate(self.payload(spouse_a_name="X" * 100), as_of=AS_OF)
-        self.assertFalse(result.valid)
-        self.assertTrue(any("does not fit" in error for error in result.errors))
+        self.assertRejectsAtValidate(
+            self.build(spouse_a={"name": "X" * 100}), msg_substr="does not fit"
+        )
 
     def test_wrappable_reason_text_fills_instead_of_rejecting(self):
         # A real, clerk-acceptable reason that doesn't fit on one line —
         # refusing this would be rejecting valid input, not catching bad
         # input, which is the opposite of what validation is supposed to do.
         long_reason = "Needed for an immigration benefit application filed with USCIS"
-        payload = self.payload(reason_search_copy_needed=long_reason)
-        result = app.validate(payload, as_of=AS_OF)
+        payload = self.build(reason=long_reason)
+        result = app.validate(self.app_from(payload), as_of=AS_OF)
         self.assertTrue(result.valid, result.errors)
         with tempfile.TemporaryDirectory() as directory:
             output, payload_path = self.fill(payload, directory)
@@ -253,26 +324,22 @@ class CC2002BTests(unittest.TestCase):
             app._fit(too_long, field["w"], field["h"], "reason")
 
     def test_latin1_guard(self):
-        result = app.validate(
-            self.payload(spouse_a_name="Harold前 Baker"), as_of=AS_OF
+        self.assertRejectsAtValidate(
+            self.build(spouse_a={"name": "Harold前 Baker"}), msg_substr="U+"
         )
-        self.assertFalse(result.valid)
-        self.assertTrue(any("U+" in e for e in result.errors))
 
     def test_emoji_is_still_rejected_by_the_unicode_fallback(self):
-        result = app.validate(
-            self.payload(spouse_a_name="Harold🙂 Baker"), as_of=AS_OF
+        self.assertRejectsAtValidate(
+            self.build(spouse_a={"name": "Harold🙂 Baker"}), msg_substr="U+1F642"
         )
-        self.assertFalse(result.valid)
-        self.assertTrue(any("U+1F642" in e for e in result.errors))
 
     def test_non_latin1_names_fill_via_embedded_unicode_font(self):
-        payload = self.payload(
-            spouse_a_name="Nguyễn Thị Phương",
-            spouse_b_name="Łukasz Kowalski",
+        payload = self.build(
+            spouse_a={"name": "Nguyễn Thị Phương"},
+            spouse_b={"name": "Łukasz Kowalski"},
             requester_name="Παπαδόπουλος",
         )
-        result = app.validate(payload, as_of=AS_OF)
+        result = app.validate(self.app_from(payload), as_of=AS_OF)
         self.assertTrue(result.valid, result.errors)
         with tempfile.TemporaryDirectory() as directory:
             output, payload_path = self.fill(payload, directory)
@@ -282,15 +349,19 @@ class CC2002BTests(unittest.TestCase):
                 [c for c in checked["checks"] if not c["passed"]],
             )
 
-    def test_form_type_other_is_rejected(self):
-        result = app.validate(self.payload(form_type="other"), as_of=AS_OF)
-        self.assertFalse(result.valid)
-        self.assertTrue(any("other" in e for e in result.errors))
+    def test_certificate_type_other_is_rejected(self):
+        # Kept in the Literal (not excluded from the schema) so this stays a
+        # specific, human-readable business-rule rejection instead of an
+        # opaque schema error — same reasoning the fee-ambiguity note gets.
+        self.assertRejectsAtValidate(
+            self.build(certificate_type="other"), msg_substr="other"
+        )
+
+    def test_unknown_top_level_field_is_rejected(self):
+        self.assertRejectsAtSchema(self.build(surprise_field="unexpected"))
 
     def test_fee_math_and_ambiguity(self):
-        relation = json.loads(
-            (SAMPLES / "02_relation_extended.json").read_text()
-        )
+        relation = app.load_application(SAMPLES / "02_relation_extended.json")
         result = app.validate(relation, as_of=AS_OF)
         self.assertTrue(result.valid, result.errors)
         self.assertEqual(result.fee["copy_fee"], 65.0)
@@ -301,18 +372,20 @@ class CC2002BTests(unittest.TestCase):
 
     def test_form_example_four_year_search_short_is_17(self):
         # Page 2 example: four year search + one certified short copy = $17.
-        payload = self.payload(
-            form_type="short",
-            year=2020,
-            years_searched=[2019, 2021, 2022],
-            number_of_copies_requested=1,
+        payload = self.build(
+            certificate_type="short",
+            marriage={
+                "date": "2020-05-30",
+                "additional_search_years": [2019, 2021, 2022],
+            },
+            copies=1,
         )
-        result = app.validate(payload, as_of=AS_OF)
+        result = app.validate(self.app_from(payload), as_of=AS_OF)
         self.assertTrue(result.valid, result.errors)
         self.assertEqual(result.fee["total"], 17.0)
 
     def test_under_50_auth_notes_not_reject(self):
-        le = json.loads((SAMPLES / "03_law_enforcement.json").read_text())
+        le = app.load_application(SAMPLES / "03_law_enforcement.json")
         result = app.validate(le, as_of=AS_OF)
         self.assertTrue(result.valid, result.errors)
         self.assertTrue(any("under 50" in note for note in result.notes))
@@ -418,33 +491,47 @@ class CC2002BTests(unittest.TestCase):
                 )
             )
 
-    def test_measure_reproduces_the_approved_field_map(self):
-        candidate = app.measure_blank(app.BLANK)
-        self.assertEqual(
-            set(candidate), set(app.FIELDS) - app.CC2002B_2016.protected,
-            "measure_blank field set drifted from the approved, hand-signed FormSpec "
-            "(protected fields are intentionally excluded — they are never re-measured)",
-        )
-        rows = app.compare_to_approved(candidate, tolerance=2.0)
-        drift = [r for r in rows if r["status"] != "OK"]
-        self.assertFalse(
-            drift,
-            "measure_blank no longer reproduces the approved coordinates within "
-            f"2pt — re-derive and re-approve before trusting it: {drift}",
-        )
-
-    def test_measure_fails_closed_on_a_missing_anchor(self):
+    def test_colored_ink_evades_pdfium_but_not_mupdf(self):
+        """mupdf's ink_is_black is the one check pdfium's darkness-only raster
+        cross-check can't reproduce: a mark dark enough to read as legitimate
+        ink to a brightness threshold still isn't grayscale. This asserts
+        pdfium_cross_check specifically does NOT catch it — proving the check
+        is real, not redundant with the second-renderer layer."""
         with tempfile.TemporaryDirectory() as directory:
-            mangled = Path(directory) / "mangled.pdf"
-            doc = pymupdf.open(str(app.BLANK))
-            doc[0].add_redact_annot(
-                pymupdf.Rect(140, 280, 340, 300), fill=(1, 1, 1)
+            output, payload_path = self.fill(self.party, directory)
+            field = app.FIELDS["reason_search_copy_are_needed"]
+            flat = app.form_values(self.app_from(self.party))
+            expected = app.text_for(
+                "reason_search_copy_are_needed", flat, as_of=AS_OF
             )
-            doc[0].apply_redactions()
-            doc.save(str(mangled))
+            tampered = Path(directory) / "colored.pdf"
+            doc = pymupdf.open(str(output))
+            page = doc[0]
+            rect = pymupdf.Rect(field["x"], field["y"], field["x1"], field["y1"])
+            # Redact the black text and reinsert the same words in dark
+            # green — same content, same position, only the color changes.
+            page.add_redact_annot(rect, fill=(1, 1, 1))
+            page.apply_redactions()
+            page.insert_text(
+                (field["x"] + 2, field["y"] + field["h"] / 2 + 3),
+                expected,
+                fontname="helv",
+                fontsize=10,
+                color=(0, 0.31, 0),
+            )
+            doc.save(str(tampered))
             doc.close()
-            with self.assertRaises(ValueError):
-                app.measure_blank(mangled)
+            checked = app.check_correctness(tampered, payload_path, as_of=AS_OF)
+            self.assertFalse(checked["passed"])
+            failed = [c["check"] for c in checked["checks"] if not c["passed"]]
+            self.assertIn("ink_is_black", failed)
+            self.assertFalse(
+                any(c.startswith("pdfium_cross_check") for c in failed),
+                "this dark-green mark should be dark enough to read as "
+                "legitimate ink to pdfium's brightness-only check — if "
+                "pdfium also flags it, this test isn't isolating what "
+                "ink_is_black catches that the second renderer can't",
+            )
 
 
 if __name__ == "__main__":
