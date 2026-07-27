@@ -121,6 +121,32 @@ class CC2002BTests(unittest.TestCase):
         self.assertFalse(leaked.valid)
         self.assertTrue(valid.valid, valid.errors)
 
+    def test_longer_relation_words_fit_via_the_inline_blank_size_floor(self):
+        # auth_relation is ~47pt — a printed underscore run inside a
+        # sentence, not a full cell. "granddaughter"/"step-daughter" are
+        # real words a real applicant will type; rejecting them outright
+        # at the 8pt floor every other field uses would be refusing valid
+        # input. A human filling this by hand would just write smaller.
+        for relation in ("granddaughter", "step-daughter"):
+            payload = self.payload(auth_checkbox=4, auth_relation=relation)
+            result = app.validate(payload, as_of=AS_OF)
+            self.assertTrue(result.valid, (relation, result.errors))
+            with tempfile.TemporaryDirectory() as directory:
+                output, payload_path = self.fill(payload, directory)
+                checked = app.check_correctness(output, payload_path, as_of=AS_OF)
+                self.assertTrue(
+                    checked["passed"],
+                    (relation, [c for c in checked["checks"] if not c["passed"]]),
+                )
+
+        # the floor has a bottom too — this doesn't fit even at 6pt
+        too_long = app.validate(
+            self.payload(auth_checkbox=4, auth_relation="great-granddaughter"),
+            as_of=AS_OF,
+        )
+        self.assertFalse(too_long.valid)
+        self.assertTrue(any("does not fit" in e for e in too_long.errors))
+
     def test_agency_is_required_only_for_option_five(self):
         missing = app.validate(
             self.payload(auth_checkbox=5, auth_other_agency=""), as_of=AS_OF

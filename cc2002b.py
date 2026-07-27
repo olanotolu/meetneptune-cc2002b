@@ -70,6 +70,13 @@ ROOT = Path(__file__).resolve().parent
 BLANK = ROOT / "cc2002b_blank.pdf"
 HELV = "helv"
 FONT_SIZES = (10, 9, 8)  # try largest first; ValueError at the floor
+# The relation/law-enforcement inline blanks are ~47pt wide by the form's
+# own printed design (an underscore run inside a sentence, not a full
+# cell) — "granddaughter", "step-daughter" genuinely don't fit at 8pt.
+# A human filling this by hand would just write smaller; 6pt confirmed
+# legible by rendering it, not assumed. Declared per-field (below), not a
+# global floor — every other field keeps the stricter 8pt minimum.
+INLINE_BLANK_FONT_SIZES = (10, 9, 8, 7, 6)
 DPI = 150 / 72           # checker raster scale (device pixels per point)
 
 # Base-14 Helvetica only covers Latin-1. Most applicant names do (Baker,
@@ -228,11 +235,11 @@ _FIELD_MAP: dict[str, dict[str, Any]] = {
     },
     "auth_relation": {
         "x": 155.89, "y": 603.61, "w": 47.11, "h": 12.0,
-        "type": "text", "fill": True,
+        "type": "text", "fill": True, "sizes": INLINE_BLANK_FONT_SIZES,
     },
     "auth_other_agency": {
         "x": 249.36, "y": 626.53, "w": 67.64, "h": 12.0,
-        "type": "text", "fill": True,
+        "type": "text", "fill": True, "sizes": INLINE_BLANK_FONT_SIZES,
     },
     # DO NOT PRINT — human signs in black ink; machine leaves these empty.
     "signature": {
@@ -812,7 +819,10 @@ def validate(
         if not text:
             continue
         try:
-            _fit(text, field_spec["w"], field_spec["h"], key)
+            _fit(
+                text, field_spec["w"], field_spec["h"], key,
+                sizes=field_spec.get("sizes", FONT_SIZES),
+            )
         except ValueError as exc:
             errors.append(str(exc))
 
@@ -933,7 +943,11 @@ def _wrap_lines(
 
 
 def _fit(
-    text: str, w: float, h: float, field_name: str = ""
+    text: str,
+    w: float,
+    h: float,
+    field_name: str = "",
+    sizes: tuple[float, ...] = FONT_SIZES,
 ) -> tuple[float, str, str | None, tuple[str, ...]]:
     """Largest size that fits — wrapping to more than one line only if the
     field's own height has room for it — plus which font and which lines.
@@ -943,11 +957,15 @@ def _fit(
     shows. Only text that actually needs it falls back to the embedded
     Unicode font, measured through its own metrics (Helvetica's aren't
     valid for a different typeface).
+
+    `sizes` defaults to FONT_SIZES; fields with their own narrower floor
+    (declared via field_spec["sizes"], e.g. the relation/law-enforcement
+    inline blanks) pass it explicitly — every other field is unaffected.
     """
     latin1 = _is_latin1(text)
     fontname = HELV if latin1 else UNICODE_FONT_NAME
     fontfile = None if latin1 else str(UNICODE_FONT_PATH)
-    for size in FONT_SIZES:
+    for size in sizes:
         lines = _wrap_lines(text, w, fontname, fontfile, size)
         fits_width = all(
             _text_width(ln, fontname, fontfile, size) <= w - 4 for ln in lines
@@ -1049,7 +1067,8 @@ def fill_final(
                 if not text:
                     continue
                 size, fontname, fontfile, lines = _fit(
-                    text, field_spec["w"], field_spec["h"], name
+                    text, field_spec["w"], field_spec["h"], name,
+                    sizes=field_spec.get("sizes", FONT_SIZES),
                 )
                 # Same formula as the original single-line centering,
                 # generalized: reduces to the exact original expression

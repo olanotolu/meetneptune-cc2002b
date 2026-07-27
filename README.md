@@ -100,7 +100,7 @@ state machine. rejects what a clerk should never receive:
 - not exactly one form type / one sworn box  
 - relation / le inline text only when auth is 4 / 5  
 - inkable only — latin-1 stays on base-14 helvetica; broader names (Nguyễn, Łukasz, Παπαδόπουλος, Дмитрий) fall back to an embedded Unicode font (`fonts/DejaVuSans.ttf`, Bitstream Vera license — see `fonts/LICENSE_DEJAVU`); anything neither font can render (CJK, Arabic, emoji) fails loud with the exact character and codepoint, never a silent `·`  
-- text must fit the measured cell — wrapped across as many lines as the cell's own height allows first (greedy word-wrap, largest font that fits), only refused once it doesn't fit even wrapped. A single-line field's chosen size/position is provably unaffected by wrapping existing — pinned by `test_single_line_fields_are_unaffected_by_wrapping` after a real regression (found by diffing the three committed samples byte-for-byte, not by inspection) where the height-fit rule briefly changed semantics for text that already fit on one line  
+- text must fit the measured cell — wrapped across as many lines as the cell's own height allows first (greedy word-wrap, largest font that fits), only refused once it doesn't fit even wrapped. A single-line field's chosen size/position is provably unaffected by wrapping existing — pinned by `test_single_line_fields_are_unaffected_by_wrapping` after a real regression (found by diffing the three committed samples byte-for-byte, not by inspection) where the height-fit rule briefly changed semantics for text that already fit on one line. the relation/law-enforcement inline blanks (`auth_relation`, `auth_other_agency`) are ~47pt wide by the form's own printed design — a real applicant's word ("granddaughter", "step-daughter") would reject at the standard 8pt floor, so those two fields specifically get a lower floor down to 6pt (confirmed legible by rendering it, not assumed), declared per-field so every other field keeps the stricter minimum. `great-granddaughter` still correctly rejects — the cell has a real bottom  
 - `form_type: other` → no price on schedule → refuse  
 
 **50-year + auth 4/5:** note, do not invent a ban. form parentheticals are adjudication paths (legal / le). fill + review note.
@@ -205,6 +205,13 @@ pikepdf==8.7.1     structural page extract only
 pypdfium2==5.9.0   independent re-render for verify (layer c)
 ```
 
+`make test` / `make fill` / `make check` are shortcuts once a venv is
+active. `make check` deliberately depends on `test`, not `fill` — it
+verifies the three *committed* sample PDFs, not freshly regenerated
+ones. That's intentional: it's the check a reviewer running this
+top-to-bottom actually wants (does what's in the repo hold up?), not a
+missing dependency.
+
 no fastapi · no langchain · no ocr · no live model on the final filing.
 
 ---
@@ -230,7 +237,7 @@ a cli on purpose:
   "mail request for marriage records," not a live request/response UI.
 
 if the next step is a service, the seam is already there — `main()` is the
-only http-shaped code in the file; everything above section 10 doesn't know
+only http-shaped code in the file; everything above section 11 doesn't know
 the cli exists.
 
 ---
@@ -246,13 +253,17 @@ read top → bottom:
 | 4–5 | validate + fee |
 | 6–7 | fill + proof receipt |
 | 8 | semantic + raster (mupdf) + independent raster (pdfium) checker |
-| 9–10 | extract-blank + cli |
+| 9 | extract-blank (pikepdf structural extract) |
+| 10 | `--measure` — deterministic re-derivation of the field map |
+| 11 | cli |
 
 ---
 
 ## two more weeks (not built)
 
-property/mutation fuzz at scale · resolve `other` pricing with 311 · http wrapper around `fill_final`/`check_correctness` if a second consumer needs it (see [cli, not http — and why](#cli-not-http--and-why))
+CJK/Arabic/RTL name support · property/mutation fuzz at scale · resolve `other` pricing with 311 · http wrapper around `fill_final`/`check_correctness` if a second consumer needs it (see [cli, not http — and why](#cli-not-http--and-why))
+
+CJK/Arabic specifically is the most likely real complaint at the actual City Clerk's office — already reasoned through in the Unicode note below (shaping + bidi are a different, larger problem than font coverage, not a bigger font), listed here explicitly rather than only as a caveat on the Unicode fix.
 
 ~~second renderer (pdfium) so mupdf does not grade itself alone~~ — built: layer c in step 6.
 ~~`measure` command for the next revision~~ — built: `--measure [blank.pdf] [--compare]`. Re-derives the field map from the page's own drawn table rules + label geometry — no hardcoded coordinates. Reproduces all 30 hand-approved fields within 1.2pt. Re-measuring a form revision is now "edit ~20 copy-pasted label strings," not "retype 80 coordinates." Still produces a *candidate* map only — `_FIELD_MAP` stays the hand-approved, fingerprint-gated source of truth for the hot path.
