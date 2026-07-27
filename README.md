@@ -2,53 +2,96 @@
 
 [![test](https://github.com/olanotolu/meetneptune-cc2002b/actions/workflows/test.yml/badge.svg)](https://github.com/olanotolu/meetneptune-cc2002b/actions/workflows/test.yml)
 
-Take JSON. Get a flat, ink-on-paper NYC marriage-record request.
+json in → flat, ink-on-paper nyc marriage-record request out. no fillable fields, no live model at fill time.
 
-The input is ordinary JSON. The output is form CC2002B — page 2 of [this packet](00_packet/neptune-takehome-form-fill-packet%20(7).pdf) — filled in black ink, no fillable fields, no signature.
+## the brief
+
+[the packet](00_packet/neptune-takehome-form-fill-packet%20(7).pdf), 3 pages: brief, form, fee schedule. form is CC2002B — no acroform, boxes are ink targets from 2016.
+
+## how it got built, in order
+
+**1. pull the blank out of the packet.**
+`pikepdf` structural extract of page 2 → `00_packet/cc2002b_blank.pdf`. not a screenshot, the actual object graph.
+
+**2. measure every box.**
+`tools/inspect_form.py` dumps word/glyph coordinates straight off the pdf. hand-measured 32 fields (30 fillable, 2 protected) against that dump, checked the result against a rendered overlay:
+
+![field map](evidence/field_map_overlay.png)
+![legend](evidence/field_map_legend.png)
+
+**3. freeze it.**
+coordinates + types + checkbox groupings + the blank's own sha-256 → `cc2002b.spec.json`. runtime reads this, never re-derives it.
+
+**4. build the engine.** one file, `cc2002b.py`:
 
 ```text
-JSON → schema check → business rules → fingerprint check → black ink → reopen and prove
+json → pydantic schema → validate() → fingerprint check → fill_final() → check_correctness()
 ```
 
-No model in the hot path. No API at runtime. No OCR, LangChain, FastAPI, or sessions.
+- schema: strict types, iso dates only, one sworn-statement kind by construction
+- validate: pre-1950 refuses, boroughs are real, text has to fit its box, unrenderable glyphs fail loud
+- fingerprint: re-hash the blank on disk before drawing anything, fail closed on drift
+- fill: flat black ink, signature line never touched
+- check: reopen the *saved* pdf and grade it three ways — semantic word/checkbox match (mupdf), raster darkness/color/paint-over (mupdf), same raster check again through pdfium so mupdf isn't grading its own homework
 
-## What this does, once and at runtime
+if the check fails, the pdf gets deleted. no proof receipt for a filing the checker itself doesn't believe in — you get a `.failed.json` instead.
 
-**Offline, once:**
+**5. prove it doesn't lie to itself.**
+adversarial tests mutate a good pdf (fake signature, second checkbox, white cover, colored ink dark enough to pass a naive check) and assert the *named* check catches it. one test proves the independent renderer catches a signature tamper on its own.
 
-- `00_packet/cc2002b_blank.pdf` is page 2 extracted with `pikepdf`.
-- Field coordinates are frozen in `cc2002b.spec.json`.
-- `tools/inspect_form.py` dumps word/glyph geometry if you ever need to re-derive.
-- `tools/compile_form.py` is an experimental offline compiler. GPT-4o vision proposes a candidate spec, draws an overlay, and the same 3-layer checker grades it. It never writes the approved spec. It doesn't propose `form_checkboxes`/`authorization_checkboxes` groupings yet — a human still wires those by hand before freezing a spec.
+checkbox crossed, not ticked:
+![checkbox](docs/visuals/03_form_type_checkbox.png)
 
-For CC2002B specifically, the geometry path wins. The form already has real coordinates; vision is ~460× slower and no more accurate here. Keep the compiler for the next scanned form with no extractable structure.
+signature area stays empty:
+![auth and signature](docs/visuals/06_auth_and_signature.png)
 
-**At runtime, `cc2002b.py`:**
+**6. call the fee ambiguity out loud.**
+page 3 quotes $15/$10 in one paragraph and $35/$30 in another for the same extended-form purchase. billed at the type-specific rate — every extended-form receipt writes an `AMBIGUOUS FEE` note with the reasoning and the $20 at stake if the other reading's right. never resolved silently.
 
-1. Loads JSON and enforces shape with Pydantic — strict ISO dates, exactly one sworn-statement type, no extra fields.
-2. `validate()` applies business rules: pre-1950 refuses, borough must be real, text must fit, fonts must be renderable.
-3. `fill_final()` draws flat black ink. It never touches the signature line.
-4. `check_correctness()` reopens the PDF and checks it three ways:
-   - **semantic (mupdf)** — right words and checkbox Xs?
-   - **raster (mupdf)** — stray ink, color, paint-over?
-   - **raster (pdfium)** — same raster checks, different renderer.
+**7. ship three real scenarios.**
 
-Every fill writes a `*.proof.json` with template/input/output hashes, fee, notes, and a pass/fail per check. If the checker fails, the PDF is deleted, not released — you get a `*.pdf.failed.json` debug report instead of a proof receipt.
+| sample | fee | note |
+|---|---:|---|
+| [party/short](outputs/01_party_short.pdf) | $15 | baseline |
+| [relation/extended](outputs/02_relation_extended.pdf) | $67 | fee flagged for review |
+| [law enforcement](outputs/03_law_enforcement.pdf) | $15 | under-50 review note, not a rejection |
 
-## Run it
+blank vs filled, same crop:
+![blank vs filled](docs/visuals/08_blank_vs_filled_block.png)
+
+full fill:
+![filled](docs/visuals/07_filled_sol_lee.png)
+
+**8. the ai side — offline only, never in the hot path.**
+`tools/compile_form.py`: renders the blank, extracts the same word geometry as step 2, sends both to gpt-4o, gets back a candidate field map, draws an overlay, runs the same 3-layer checker against it as a test fill.
+
+ran it: 31 fields proposed, 86/86 checks passed. then timed it against the geometry path:
+
+| path | time |
+|---|---:|
+| `inspect_form.py` (geometry) | 0.3s |
+| `compile_form.py` (vision) | 138s |
+
+460x slower, zero accuracy gain — this form already has real vector geometry to read. said so in this readme instead of pretending otherwise. keeps the compiler around for the next form that's a pure scan.
+
+**9. review pass before calling it done.**
+ran it end to end like a pr review, found four real things, fixed them:
+- pydantic's bare `date` type silently accepted epoch ints and full datetime strings → added a strict `YYYY-MM-DD`-only validator
+- cli would write a proof receipt even for a filing that failed its own check → now deletes the pdf and writes `.failed.json` instead
+- fee note wording implied a flat contradiction instead of describing the actual broad-then-specific structure → rewrote it
+- `compile_form.py`'s auto-verify patched the spec but not the blank path, so testing a different form would've silently verified against the wrong one → fixed
+
+added regression tests for both, regenerated the three outputs, reran everything.
+
+## run it
 
 ```bash
-# fill one sample
 uv run cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf
-
-# verify an existing output
 uv run cc2002b.py --check outputs/01_party_short.pdf samples/01_party_short.json
-
-# tests
 uv run --with-requirements requirements.txt python -m unittest discover -s tests -v
 ```
 
-Or with a normal venv pinned to 3.12 (`pymupdf` doesn't have wheels for 3.13/3.14 yet):
+manual venv, pinned to 3.12 (`pymupdf` has no 3.13/3.14 wheel yet):
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
@@ -57,11 +100,9 @@ python cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf
 python -m unittest discover -s tests -v
 ```
 
-`make test` and `make check` also work once the venv is active.
+`make test` / `make check` work once the venv's active.
 
-## Input shape
-
-See [`samples/01_party_short.json`](samples/01_party_short.json):
+## input shape
 
 ```json
 {
@@ -73,36 +114,15 @@ See [`samples/01_party_short.json`](samples/01_party_short.json):
 }
 ```
 
-Dates are `YYYY-MM-DD` only — not a datetime string, not an epoch int. `"May 30, 2025"`, `"05/30/2025"`, `"2025-05-30T00:00:00"`, and `0` all fail immediately at the schema layer. That's on purpose: one fact, one representation.
+dates are `YYYY-MM-DD`, nothing else. `"May 30, 2025"`, `0`, `"2025-05-30T00:00:00"` all bounce at the schema layer.
 
-## Validation policy
+## why cli, not http
 
-- Marriage year `< 1950` → Municipal Archives, not City Clerk.
-- Names must be inkable. Latin-1 stays on Helvetica. Greek/Cyrillic/etc. falls back to the bundled `fonts/DejaVuSans.ttf`. CJK, Arabic, and emoji fail loud with the exact code point.
-- Text must fit the measured box. The relation/law-enforcement inline blanks are narrower, so they get a 6 pt floor; everything else bottoms at 8 pt.
-- `certificate_type: "other"` has no listed price → refuse.
-- `relation` or `law_enforcement` on a record under 50 years old gets a review note, not a rejection.
+pure function — json in, pdf + proof out. no auth, no sessions, nothing to keep alive. `fill_final`/`check_correctness` are already transport-agnostic if a real service boundary shows up later.
 
-## Fee note
+## next
 
-Page 2 first gives a broad certified-copy rate ($15 initial / $10 additional), then later prices the extended form separately at $35/$30. We treat the later, type-specific rule as controlling. Because the earlier language is broad enough to conflict, every extended-form proof receipt records the interpretation, flags for review, and shows the $20 difference under the other reading. Nothing is resolved silently.
-
-## Sample outputs
-
-| sample | output | fee |
-|---|---|---:|
-| party / short | [outputs/01_party_short.pdf](outputs/01_party_short.pdf) | $15 |
-| relation / extended | [outputs/02_relation_extended.pdf](outputs/02_relation_extended.pdf) | $67 |
-| law enforcement | [outputs/03_law_enforcement.pdf](outputs/03_law_enforcement.pdf) | $15 |
-
-## Why CLI, not HTTP
-
-It's a pure function: JSON in, PDF + proof out. No auth, no sessions, no persistence. A FastAPI wrapper would be a thin mechanical layer later; the engine is already transport-agnostic.
-
-## Next
-
-- Turn `tools/compile_form.py` into a multi-proposer loop: geometry + vision both propose, the same checker grades, human activates the winner.
-- CJK/Arabic/RTL name support.
-- Property/mutation fuzz at scale.
-- Resolve the `other` fee ambiguity with 311.
-- HTTP wrapper if a second consumer actually needs it.
+- multi-proposer loop: geometry + vision both propose, same checker grades both, human picks
+- cjk/arabic/rtl name support
+- property/mutation fuzz at scale
+- resolve `other` pricing with 311

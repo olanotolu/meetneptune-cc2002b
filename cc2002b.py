@@ -140,12 +140,8 @@ ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _require_iso_date_string(value: Any) -> Any:
-    """Pydantic's bare `date` type is looser than the "ISO 8601 only" promise
-    in this README: it also accepts an epoch int/float (0 -> 1970-01-01) and
-    a full ISO datetime string ("2025-05-30T00:00:00"). Neither is a date the
-    form's own JSON contract offers, so both are schema rejections here, not
-    silent coercions — same "one representation per fact" rule as everywhere
-    else in this file."""
+    """Bare pydantic `date` also accepts epoch ints and full ISO datetime
+    strings. Neither is a shape this form's JSON offers — reject both."""
     if not isinstance(value, str) or not ISO_DATE_RE.fullmatch(value):
         raise ValueError("must be an ISO date string in YYYY-MM-DD format")
     return value
@@ -1521,9 +1517,7 @@ def main(argv: list[str] | None = None) -> int:
     code = _print_check(check_result)
 
     if not check_result["passed"]:
-        # Never release a PDF the checker itself doesn't believe. Delete the
-        # unverified artifact and leave a debug report in its place — named
-        # so it can't be mistaken for a normal proof receipt.
+        # never release a pdf the checker doesn't believe
         Path(output_path).unlink(missing_ok=True)
         failed_path = Path(str(output_path) + ".failed.json")
         with open(failed_path, "w") as f:

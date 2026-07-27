@@ -210,14 +210,11 @@ def draw_overlay(blank_path: Path, fields: dict[str, Any], out_png: Path) -> Non
 
 
 def auto_verify(blank_path: Path, spec: dict[str, Any], payload_path: Path) -> dict[str, Any]:
-    """Attempt a test fill + 3-layer check against the candidate spec.
+    """Test fill + 3-layer check against the candidate spec.
 
-    fill_final()/check_correctness() open cc2002b.py's module-level BLANK
-    constant internally rather than an argument, so BLANK must be patched
-    too -- otherwise compiling a *different* form would silently verify
-    against the approved CC2002B blank instead of the one actually passed
-    in. Both SPEC/FIELDS and BLANK are restored afterward.
-    """
+    fill_final/check_correctness read cc2002b.py's module-level BLANK, not
+    an argument — patch it too or compiling a different form silently
+    verifies against the approved CC2002B blank instead."""
     original_spec, original_fields, original_blank = app.SPEC, app.FIELDS, app.BLANK
     app.SPEC = spec
     app.FIELDS = spec["fields"]
