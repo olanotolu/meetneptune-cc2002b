@@ -113,7 +113,16 @@ inbound question came in: Sol Lee asked whether the form should accept month nam
 
 pure function — json in, pdf + proof out. no auth, no sessions, nothing to keep alive. `fill_final`/`check_correctness` are already transport-agnostic if a real service boundary shows up later.
 
-## next
+## where the form fought you
 
-- cjk/arabic/rtl name support
-- resolve `other` pricing with 311
+- **two checkbox glyph families.** the form uses wingdings for the top form-type boxes and ascii `(_)` for the sworn-statement group. same visual concept, two different internal representations — disambiguated by reading order, not by glyph code.
+- **inline blanks aren't cells.** the relation and law-enforcement lines have ~47pt underscore runs inside printed sentences, not full table cells. a 10pt name fits; "granddaughter" doesn't. added a lower font-size floor (10/9/8/7/6) just for those two fields instead of rejecting valid input.
+- **no vertical rules.** column boundaries come from label word edges, not drawn grid lines. measuring meant reading the form like a human, not parsing a table.
+- **fee schedule contradicts itself.** page 3 says $15/$10 broadly, then $35/$30 for extended. picked the type-specific rate, called it loud. see step 6 above.
+
+## next (two more weeks)
+
+- **second form.** the spec.json + fingerprint gate pattern is already form-agnostic. onboarding a new form is a new spec file + field map + overlay review — `cc2002b.py` doesn't change. the brief said "if your design makes the second form easy, say so." it does.
+- **cjk/arabic/rtl names.** DejaVu covers Latin Extended, Cyrillic, Greek. Noto Sans would cover the rest. the uninkable-char guard already fails loud — swapping the fallback font is a one-line change.
+- **resolve `other` pricing.** needs a call to 311, not code.
+- **http wrapper.** when there's a real service boundary with auth and persistence, not before. `fill_final` / `check_correctness` are already transport-agnostic.
