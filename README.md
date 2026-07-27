@@ -1,5 +1,7 @@
 # cc2002b
 
+[![test](https://github.com/olanotolu/meetneptune-cc2002b/actions/workflows/test.yml/badge.svg)](https://github.com/olanotolu/meetneptune-cc2002b/actions/workflows/test.yml)
+
 json in → flat nyc marriage-record request out. one form. proved.
 
 source packet: [`neptune-takehome-form-fill-packet (7).pdf`](neptune-takehome-form-fill-packet%20(7).pdf)
