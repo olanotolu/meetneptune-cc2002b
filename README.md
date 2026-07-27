@@ -82,6 +82,39 @@ added regression tests, regenerated the three outputs, reran everything.
 - the raster thresholds had no guard against the renderer they were calibrated against changing under them — added a calibration baseline and a drift test; see below
 - the fee schedule was the last thing still hardcoded, and hardcoding it had produced a wrong number — the `AMBIGUOUS FEE` note said "$20.00 difference" always, but that's only true for an order of one. sample 02 is a 2-copy filing: billed $65 against an alternative reading of $25, so the real exposure was **$40**. the note now prices the competing reading instead of quoting a constant
 
+## the receipt has to be checkable by someone who doesn't trust you
+
+a hash of a file you also wrote proves nothing on its own. two things make the
+proof receipt worth reading:
+
+**the output is byte-deterministic.** mupdf stamps a fresh random `/ID` on every
+save, so filling the same payload twice used to produce two different sha-256s —
+`output_hash` could only ever say "this exact file wasn't touched since i wrote
+it," never "here's the filing, rebuild it yourself." `fill_final` now re-saves
+through pikepdf with `deterministic_id=True` (the same discipline the blank
+extraction already used) and strips date metadata. same payload → same bytes,
+across runs and machines. `test_same_payload_fills_to_identical_bytes` fails
+without it.
+
+**the receipt is signed.** ed25519 over the canonical receipt json, detached to
+`<pdf>.proof.json.sig`. set `CC2002B_SIGNING_KEY` and filings get signed;
+leave it unset and the run says so out loud rather than pretending.
+
+```bash
+uv run python cc2002b.py --verify outputs/01_party_short.pdf $(cat SIGNING_KEY.pub)
+```
+
+that checks three things without the payload, the blank, or this repo: the pdf's
+bytes are the ones the receipt describes, the receipt carries a valid signature,
+and the signer is the key you pinned. the third one matters — a forger can edit
+a receipt and re-sign it with their own key perfectly consistently, so
+verification with no pinned key is reported as a **failure**, not a pass.
+`test_resigning_with_another_key_fails_the_pin` is that exact attack.
+
+the three committed samples are signed with the demo key in
+[SIGNING_KEY.pub](SIGNING_KEY.pub). its private half was generated in a temp dir
+and never entered the repo.
+
 ## the thresholds only mean something against a renderer
 
 `_DARK`, `_MIN_DARK` and `_MAX_DARK_FRAC` were calibrated by hand against
@@ -124,39 +157,6 @@ verified it actually fires, rather than trusting that it would:
 | 50% shift, still inside thresholds | baseline comparison |
 | pymupdf bumped to 1.27.0 | version pin |
 | threshold edited without recalibrating | threshold pin |
-
-## the receipt has to be checkable by someone who doesn't trust you
-
-a hash of a file you also wrote proves nothing on its own. two things make the
-proof receipt worth reading:
-
-**the output is byte-deterministic.** mupdf stamps a fresh random `/ID` on every
-save, so filling the same payload twice used to produce two different sha-256s —
-`output_hash` could only ever say "this exact file wasn't touched since i wrote
-it," never "here's the filing, rebuild it yourself." `fill_final` now re-saves
-through pikepdf with `deterministic_id=True` (the same discipline the blank
-extraction already used) and strips date metadata. same payload → same bytes,
-across runs and machines. `test_same_payload_fills_to_identical_bytes` fails
-without it.
-
-**the receipt is signed.** ed25519 over the canonical receipt json, detached to
-`<pdf>.proof.json.sig`. set `CC2002B_SIGNING_KEY` and filings get signed;
-leave it unset and the run says so out loud rather than pretending.
-
-```bash
-uv run python cc2002b.py --verify outputs/01_party_short.pdf $(cat SIGNING_KEY.pub)
-```
-
-that checks three things without the payload, the blank, or this repo: the pdf's
-bytes are the ones the receipt describes, the receipt carries a valid signature,
-and the signer is the key you pinned. the third one matters — a forger can edit
-a receipt and re-sign it with their own key perfectly consistently, so
-verification with no pinned key is reported as a **failure**, not a pass.
-`test_resigning_with_another_key_fails_the_pin` is that exact attack.
-
-the three committed samples are signed with the demo key in
-[SIGNING_KEY.pub](SIGNING_KEY.pub). its private half was generated in a temp dir
-and never entered the repo.
 
 ## a second form
 
