@@ -66,7 +66,14 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Union
 
 import pymupdf
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 0. Paths and constants
@@ -129,6 +136,22 @@ USPS_STATES = {
 STATE_RE = re.compile(r"^[A-Za-z]{2}$")
 ZIP_RE = re.compile(r"^\d{5}(-\d{4})?$")
 PHONE_RE = re.compile(r"^(?:\+1|1)?[\s\-.()]*(\d[\s\-.()]{0,2}){10}$")
+ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _require_iso_date_string(value: Any) -> Any:
+    """Pydantic's bare `date` type is looser than the "ISO 8601 only" promise
+    in this README: it also accepts an epoch int/float (0 -> 1970-01-01) and
+    a full ISO datetime string ("2025-05-30T00:00:00"). Neither is a date the
+    form's own JSON contract offers, so both are schema rejections here, not
+    silent coercions — same "one representation per fact" rule as everywhere
+    else in this file."""
+    if not isinstance(value, str) or not ISO_DATE_RE.fullmatch(value):
+        raise ValueError("must be an ISO date string in YYYY-MM-DD format")
+    return value
+
+
+IsoDate = Annotated[date, BeforeValidator(_require_iso_date_string)]
 
 # 50-year rule for relation/law_enforcement authorization (own this choice):
 # A naive reading of the top NOTE would hard-reject under-50 records for
@@ -276,16 +299,17 @@ class Address(BaseModel):
 class Person(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    birth_date: date  # ISO 8601 (YYYY-MM-DD) only — Pydantic's date type
-    # rejects "May 30, 1991", "05/30/1991", ints, and bools on its own; one
-    # representation for one fact, no parser needed on our side.
+    birth_date: IsoDate  # ISO 8601 (YYYY-MM-DD) only, and only that string
+    # shape — the before-validator rejects "May 30, 1991", "05/30/1991",
+    # epoch ints, and full ISO datetime strings; one representation for one
+    # fact, no parser needed on our side.
 
 
 class Marriage(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    date: date  # CTO's "strict month" rule generalizes: a real ISO calendar
-    # date can't carry a month name or an out-of-range month in the first
-    # place, so there's nothing left to range-check after Pydantic parses it.
+    date: IsoDate  # CTO's "strict month" rule generalizes: a real ISO
+    # calendar date can't carry a month name or an out-of-range month in the
+    # first place, so there's nothing left to range-check after parsing.
     borough: str
     license_no: str
     additional_search_years: list[Annotated[int, Field(strict=True)]] = Field(
@@ -613,15 +637,16 @@ def calculate_fee(
         copy_fee = 35.00 + (copies - 1) * 30.00
         first_copy, additional = 35.00, 30.00
         notes.append(
-            "AMBIGUOUS FEE: Page 2 says both \"Each certified copy … costs "
-            "$15.00 and each additional … is $10.00\" and that the extended "
-            "form \"costs $35 for the initial copy and $30 for any additional "
-            "copies\" — same purchase, two prices. Billed at $35.00/$30.00: "
-            "the type-specific paragraph ends \"If you do not specify the form "
-            "you desire you will be sent a short form\", making $15.00/$10.00 "
-            "the default form's price, not a universal rate. If the flat "
-            "reading is right, this overpays the initial copy by $20.00. "
-            "Confirm with the City Clerk (311 or 212-NEW-YORK) if disputed."
+            "AMBIGUOUS FEE: The instructions first provide a broad "
+            "certified-copy rate of $15 for the initial copy and $10 for "
+            "each additional copy. They later distinguish certificate "
+            "types, pricing an extended form at $35/$30 and a short form "
+            "at $15/$10. I treat the later, type-specific rule as "
+            "controlling. Because the earlier language is broad enough to "
+            "create a conflict, extended-form receipts record the "
+            "interpretation, require review, and show the $20.00 "
+            "difference under the alternative reading. Confirm with the "
+            "City Clerk (311 or 212-NEW-YORK) if disputed."
         )
 
     all_years = set(extra_years)
@@ -1491,10 +1516,26 @@ def main(argv: list[str] | None = None) -> int:
 
     flat = form_values(app)
     fill_final(flat, output_path, as_of=as_of, spec=spec)
-    print(f"Filled:  {output_path}")
 
     check_result = check_correctness(output_path, payload_path, as_of=as_of)
     code = _print_check(check_result)
+
+    if not check_result["passed"]:
+        # Never release a PDF the checker itself doesn't believe. Delete the
+        # unverified artifact and leave a debug report in its place — named
+        # so it can't be mistaken for a normal proof receipt.
+        Path(output_path).unlink(missing_ok=True)
+        failed_path = Path(str(output_path) + ".failed.json")
+        with open(failed_path, "w") as f:
+            json.dump(check_result, f, indent=2)
+            f.write("\n")
+        print(
+            f"Verification failed; unverified PDF deleted. Report: {failed_path}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Filled:  {output_path}")
 
     receipt = build_proof_receipt(
         spec=spec,

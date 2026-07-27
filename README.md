@@ -19,7 +19,7 @@ No model in the hot path. No API at runtime. No OCR, LangChain, FastAPI, or sess
 - `00_packet/cc2002b_blank.pdf` is page 2 extracted with `pikepdf`.
 - Field coordinates are frozen in `cc2002b.spec.json`.
 - `tools/inspect_form.py` dumps word/glyph geometry if you ever need to re-derive.
-- `tools/compile_form.py` is an experimental offline compiler. GPT-4o vision proposes a candidate spec, draws an overlay, and the same 3-layer checker grades it. It never writes the approved spec.
+- `tools/compile_form.py` is an experimental offline compiler. GPT-4o vision proposes a candidate spec, draws an overlay, and the same 3-layer checker grades it. It never writes the approved spec. It doesn't propose `form_checkboxes`/`authorization_checkboxes` groupings yet — a human still wires those by hand before freezing a spec.
 
 For CC2002B specifically, the geometry path wins. The form already has real coordinates; vision is ~460× slower and no more accurate here. Keep the compiler for the next scanned form with no extractable structure.
 
@@ -33,7 +33,7 @@ For CC2002B specifically, the geometry path wins. The form already has real coor
    - **raster (mupdf)** — stray ink, color, paint-over?
    - **raster (pdfium)** — same raster checks, different renderer.
 
-Every fill writes a `*.proof.json` with template/input/output hashes, fee, notes, and a pass/fail per check.
+Every fill writes a `*.proof.json` with template/input/output hashes, fee, notes, and a pass/fail per check. If the checker fails, the PDF is deleted, not released — you get a `*.pdf.failed.json` debug report instead of a proof receipt.
 
 ## Run it
 
@@ -73,7 +73,7 @@ See [`samples/01_party_short.json`](samples/01_party_short.json):
 }
 ```
 
-Dates are `YYYY-MM-DD` only. `"May 30, 2025"`, `"05/30/2025"`, or `"May"` all fail immediately at the schema layer. That's on purpose: one fact, one representation.
+Dates are `YYYY-MM-DD` only — not a datetime string, not an epoch int. `"May 30, 2025"`, `"05/30/2025"`, `"2025-05-30T00:00:00"`, and `0` all fail immediately at the schema layer. That's on purpose: one fact, one representation.
 
 ## Validation policy
 
@@ -85,7 +85,7 @@ Dates are `YYYY-MM-DD` only. `"May 30, 2025"`, `"05/30/2025"`, or `"May"` all fa
 
 ## Fee note
 
-Page 2 lists two different prices for the same extended-form purchase (`$15/$10` and `$35/$30`). We bill at the type-specific rate (`$35/$30`) and write an `AMBIGUOUS FEE` note into the proof receipt. We don't silently pick one.
+Page 2 first gives a broad certified-copy rate ($15 initial / $10 additional), then later prices the extended form separately at $35/$30. We treat the later, type-specific rule as controlling. Because the earlier language is broad enough to conflict, every extended-form proof receipt records the interpretation, flags for review, and shows the $20 difference under the other reading. Nothing is resolved silently.
 
 ## Sample outputs
 

@@ -210,19 +210,28 @@ def draw_overlay(blank_path: Path, fields: dict[str, Any], out_png: Path) -> Non
 
 
 def auto_verify(blank_path: Path, spec: dict[str, Any], payload_path: Path) -> dict[str, Any]:
-    """Attempt a test fill + 3-layer check against the candidate spec."""
-    # Swap the in-process approved spec for the candidate so the hot path
-    # uses it without touching cc2002b.spec.json on disk.
+    """Attempt a test fill + 3-layer check against the candidate spec.
+
+    fill_final()/check_correctness() open cc2002b.py's module-level BLANK
+    constant internally rather than an argument, so BLANK must be patched
+    too -- otherwise compiling a *different* form would silently verify
+    against the approved CC2002B blank instead of the one actually passed
+    in. Both SPEC/FIELDS and BLANK are restored afterward.
+    """
+    original_spec, original_fields, original_blank = app.SPEC, app.FIELDS, app.BLANK
     app.SPEC = spec
     app.FIELDS = spec["fields"]
-
-    app_obj = app.load_application(payload_path)
-    flat = app.form_values(app_obj)
-    with tempfile.TemporaryDirectory() as td:
-        filled = Path(td) / "filled.pdf"
-        as_of = date.today()
-        app.fill_final(flat, filled, as_of=as_of, spec=spec)
-        return app.check_correctness(filled, payload_path, as_of=as_of)
+    app.BLANK = blank_path
+    try:
+        app_obj = app.load_application(payload_path)
+        flat = app.form_values(app_obj)
+        with tempfile.TemporaryDirectory() as td:
+            filled = Path(td) / "filled.pdf"
+            as_of = date.today()
+            app.fill_final(flat, filled, as_of=as_of, spec=spec)
+            return app.check_correctness(filled, payload_path, as_of=as_of)
+    finally:
+        app.SPEC, app.FIELDS, app.BLANK = original_spec, original_fields, original_blank
 
 
 def main(argv: list[str] | None = None) -> int:

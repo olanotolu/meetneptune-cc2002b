@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 import pymupdf
 
@@ -115,6 +116,16 @@ class CC2002BTests(unittest.TestCase):
             self.app_from(self.build(marriage={"date": "2025-05-30"}))
         )
         self.assertEqual(app.text_for("month", flat, as_of=AS_OF), "May")
+
+    def test_dates_reject_epoch_ints_and_iso_datetime_strings(self):
+        # Pydantic's bare `date` type is looser than "ISO 8601 only": it
+        # also accepts an epoch int/float (0 -> 1970-01-01) and a full ISO
+        # datetime string ("...T00:00:00"). Neither is a shape this form's
+        # JSON contract offers, so both must be schema rejections, not
+        # silent coercions to a date the applicant never actually typed.
+        for bad_date in (0, 1748563200, "2025-05-30T00:00:00", "2025-05-30T00:00:00Z"):
+            self.assertRejectsAtSchema(self.build(marriage={"date": bad_date}))
+            self.assertRejectsAtSchema(self.build(spouse_a={"birth_date": bad_date}))
 
     def test_boolean_date_and_copies_are_rejected_by_strict_schema(self):
         # Plain (non-strict) Pydantic int fields silently coerce True -> 1 —
@@ -407,6 +418,34 @@ class CC2002BTests(unittest.TestCase):
                     checked["passed"],
                     [c for c in checked["checks"] if not c["passed"]],
                 )
+
+    def test_cli_deletes_pdf_and_skips_proof_when_check_fails(self):
+        """The CLI must never release a PDF the checker itself rejects."""
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "payload.json"
+            payload_path.write_text(json.dumps(self.party))
+            output_path = Path(directory) / "out.pdf"
+
+            forced_failure = {
+                "passed": False,
+                "checks": [
+                    {"check": "forced", "passed": False, "detail": "forced failure"}
+                ],
+            }
+            with mock.patch.object(
+                app, "check_correctness", return_value=forced_failure
+            ):
+                code = app.main([str(payload_path), str(output_path)])
+
+            self.assertEqual(code, 1)
+            self.assertFalse(output_path.exists(), "unverified PDF must be deleted")
+            failed_path = Path(str(output_path) + ".failed.json")
+            self.assertTrue(failed_path.exists())
+            self.assertEqual(json.loads(failed_path.read_text()), forced_failure)
+            proof_path = Path(str(output_path) + ".proof.json")
+            self.assertFalse(
+                proof_path.exists(), "no proof receipt for a rejected filing"
+            )
 
     def test_signature_tamper_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

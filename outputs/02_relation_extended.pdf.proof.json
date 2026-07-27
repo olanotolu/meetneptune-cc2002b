@@ -2,7 +2,7 @@
   "template_hash": "0a34ee8217e65105fa28d61f46a7af1cea585340a36238eb02da10796442ebca",
   "form_spec_version": "CC2002B@9/20/2016#1.0.0",
   "input_hash": "171068ed876533db31dc05a7e84dbba13f4fb6174d213a351fd493c12d4c6957",
-  "output_hash": "b18b151e93543580f7837d433919c92aeece368029828a17f40d56f83ba07a2f",
+  "output_hash": "9769eecd64278d840cef4ffc1c417c7b2cfb18603b7e995122061c4b54dab6d7",
   "renderer": {
     "engine": "mupdf",
     "pymupdf": "1.26.6"
@@ -26,7 +26,7 @@
     "fee_status": "resolved"
   },
   "notes": [
-    "AMBIGUOUS FEE: Page 2 says both \"Each certified copy \u2026 costs $15.00 and each additional \u2026 is $10.00\" and that the extended form \"costs $35 for the initial copy and $30 for any additional copies\" \u2014 same purchase, two prices. Billed at $35.00/$30.00: the type-specific paragraph ends \"If you do not specify the form you desire you will be sent a short form\", making $15.00/$10.00 the default form's price, not a universal rate. If the flat reading is right, this overpays the initial copy by $20.00. Confirm with the City Clerk (311 or 212-NEW-YORK) if disputed."
+    "AMBIGUOUS FEE: The instructions first provide a broad certified-copy rate of $15 for the initial copy and $10 for each additional copy. They later distinguish certificate types, pricing an extended form at $35/$30 and a short form at $15/$10. I treat the later, type-specific rule as controlling. Because the earlier language is broad enough to create a conflict, extended-form receipts record the interpretation, require review, and show the $20.00 difference under the alternative reading. Confirm with the City Clerk (311 or 212-NEW-YORK) if disputed."
   ],
   "checks_passed": 116,
   "checks_failed": 0,
