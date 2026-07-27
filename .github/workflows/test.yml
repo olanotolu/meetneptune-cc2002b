@@ -11,14 +11,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          enable-cache: true
 
-      - run: pip install -r requirements.txt
+      - name: install from the lockfile
+        run: uv sync --locked
+
+      - name: lint
+        run: uv run ruff check .
+
+      - name: types
+        run: uv run mypy
 
       - name: unit tests (incl. adversarial tamper checks)
         run: make test
 
       - name: fill + reopen-and-prove the three committed samples
         run: make check
+
+      - name: sign a filing and verify it against a pinned key
+        run: make sign-check

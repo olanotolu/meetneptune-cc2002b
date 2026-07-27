@@ -1,0 +1,125 @@
+{
+  "_comment": "Regenerate with `make calibrate`. Baselines are only compared strictly on the platform they were measured on; everywhere else the test asserts margins, which is the property that matters.",
+  "calibrated_on": {
+    "platform": "darwin",
+    "machine": "arm64",
+    "python": "3.12.11"
+  },
+  "renderers": {
+    "pymupdf": "1.26.6",
+    "pypdfium2": "5.9.0",
+    "pdfium": "150.0.7869.0"
+  },
+  "thresholds": {
+    "dark": 128,
+    "min_dark": 8,
+    "max_dark_frac": 0.5
+  },
+  "sample": "samples/01_party_short.json",
+  "as_of": "2026-07-26",
+  "margins": {
+    "tightest_floor_multiple": 2.75,
+    "tightest_floor_field": "number_of_copies_requested",
+    "highest_cap_fraction": 0.1403,
+    "highest_cap_field": "license_no",
+    "darkest_ink_brightness": 0,
+    "pdfium_stray": 0
+  },
+  "fields": {
+    "month": {
+      "mupdf_dark": 208,
+      "pdfium_dark": 202,
+      "cap": 4681
+    },
+    "day": {
+      "mupdf_dark": 120,
+      "pdfium_dark": 125,
+      "cap": 2852
+    },
+    "year": {
+      "mupdf_dark": 246,
+      "pdfium_dark": 256,
+      "cap": 4867
+    },
+    "license_was_issued": {
+      "mupdf_dark": 479,
+      "pdfium_dark": 518,
+      "cap": 4464
+    },
+    "license_no": {
+      "mupdf_dark": 598,
+      "pdfium_dark": 623,
+      "cap": 4263
+    },
+    "full_legal_name_before_marriage": {
+      "mupdf_dark": 297,
+      "pdfium_dark": 321,
+      "cap": 15201
+    },
+    "date": {
+      "mupdf_dark": 465,
+      "pdfium_dark": 507,
+      "cap": 4725
+    },
+    "full_legal_name_before_marriage_09": {
+      "mupdf_dark": 1036,
+      "pdfium_dark": 1142,
+      "cap": 14893
+    },
+    "date_10": {
+      "mupdf_dark": 473,
+      "pdfium_dark": 498,
+      "cap": 4637
+    },
+    "reason_search_copy_are_needed": {
+      "mupdf_dark": 562,
+      "pdfium_dark": 635,
+      "cap": 9102
+    },
+    "number_of_copies_requested": {
+      "mupdf_dark": 22,
+      "pdfium_dark": 38,
+      "cap": 5170
+    },
+    "name_of_person_requesting_search": {
+      "mupdf_dark": 295,
+      "pdfium_dark": 318,
+      "cap": 5060
+    },
+    "your_relationship_to_either_spouse": {
+      "mupdf_dark": 334,
+      "pdfium_dark": 341,
+      "cap": 5539
+    },
+    "your_telephone_no": {
+      "mupdf_dark": 647,
+      "pdfium_dark": 661,
+      "cap": 4669
+    },
+    "street": {
+      "mupdf_dark": 555,
+      "pdfium_dark": 615,
+      "cap": 7102
+    },
+    "apt_no": {
+      "mupdf_dark": 64,
+      "pdfium_dark": 62,
+      "cap": 3021
+    },
+    "city": {
+      "mupdf_dark": 363,
+      "pdfium_dark": 411,
+      "cap": 5936
+    },
+    "state": {
+      "mupdf_dark": 110,
+      "pdfium_dark": 139,
+      "cap": 1722
+    },
+    "zip_code": {
+      "mupdf_dark": 215,
+      "pdfium_dark": 238,
+      "cap": 4028
+    }
+  }
+}

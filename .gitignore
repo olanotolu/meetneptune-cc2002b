@@ -2,9 +2,17 @@
 venv/
 __pycache__/
 *.py[cod]
-.pytest_cache/
 *.tmp
+*.stage
 .DS_Store
 outputs/*.tmp
-.python-version
+outputs/*.stage
 .hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# .python-version is committed on purpose: uv reads it to pick the interpreter.
+
+# Signing keys never belong in the repo. The public half does — SIGNING_KEY.pub.
+*.key
+*.key.hex

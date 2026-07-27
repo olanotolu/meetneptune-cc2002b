@@ -7,7 +7,9 @@ schema (Pydantic) and business rules (validate()). Each test targets one.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import os
 import tempfile
 import unittest
 from datetime import date
@@ -282,7 +284,7 @@ class CC2002BTests(unittest.TestCase):
     def test_single_line_fields_are_unaffected_by_wrapping(self):
         # Wrapping must not change size/position for text that fits on one line
         field = app.FIELDS["name_of_person_requesting_search"]
-        size, fontname, fontfile, lines = app._fit(
+        size, _fontname, _fontfile, lines = app._fit(
             "Sol Lee", field["w"], field["h"], "name_of_person_requesting_search"
         )
         self.assertEqual(size, 10)
@@ -343,6 +345,73 @@ class CC2002BTests(unittest.TestCase):
         self.assertTrue(result.fee["requires_review"])
         self.assertTrue(any("AMBIGUOUS FEE" in note for note in result.notes))
 
+    def test_ambiguity_exposure_scales_with_copies(self):
+        """The note used to hardcode '$20.00', which is only right for an order
+        of one. This 2-copy filing is billed $65 against an alternative reading
+        of $25 — the exposure is $40, and the receipt has to say so."""
+        relation = app.load_application(SAMPLES / "02_relation_extended.json")
+        result = app.validate(relation, as_of=AS_OF)
+        self.assertEqual(result.fee["breakdown"]["num_copies"], 2)
+        self.assertEqual(result.fee["alternative_reading"]["copy_fee"], 25.0)
+        self.assertEqual(result.fee["alternative_reading"]["difference"], 40.0)
+        note = next(n for n in result.notes if "AMBIGUOUS FEE" in n)
+        self.assertIn("$40.00 difference", note)
+        self.assertNotIn("$20.00", note)
+
+    def test_single_copy_ambiguity_is_still_twenty(self):
+        payload = self.build(certificate_type="extended", copies=1)
+        result = app.validate(self.app_from(payload), as_of=AS_OF)
+        self.assertEqual(result.fee["alternative_reading"]["difference"], 20.0)
+        note = next(n for n in result.notes if "AMBIGUOUS FEE" in n)
+        self.assertIn("$20.00 difference", note)
+        self.assertIn("1 copy", note)
+
+    def test_reprice_needs_no_code_change(self):
+        """The whole point of moving the schedule into data: a fee change is a
+        data edit, not a patch to calculate_fee."""
+        repriced = app.FEES.model_copy(deep=True)
+        repriced.copy_rates["short"].first_copy = 25.0
+        repriced.copy_rates["short"].additional_copy = 20.0
+        payload = self.build(certificate_type="short", copies=3)
+
+        billed = app.validate(self.app_from(payload), as_of=AS_OF, fees=repriced)
+        self.assertEqual(billed.fee["copy_fee"], 65.0)  # 25 + 20 + 20
+        self.assertEqual(billed.fee["breakdown"]["first_copy"], 25.0)
+
+        unchanged = app.validate(self.app_from(payload), as_of=AS_OF)
+        self.assertEqual(unchanged.fee["copy_fee"], 35.0)  # 15 + 10 + 10
+
+    def test_unpriced_type_is_driven_by_the_schedule(self):
+        """'other' isn't special-cased in code — it's absent from copy_rates."""
+        stripped = app.FEES.model_copy(deep=True)
+        del stripped.copy_rates["extended"]
+        stripped.unpriced_types["extended"] = "withdrawn pending review"
+        result = app.validate(
+            self.app_from(self.build(certificate_type="extended")),
+            as_of=AS_OF,
+            fees=stripped,
+        )
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("withdrawn pending review" in e for e in result.errors),
+            result.errors,
+        )
+
+    def test_receipt_records_which_schedule_priced_the_filing(self):
+        relation = app.load_application(SAMPLES / "02_relation_extended.json")
+        result = app.validate(relation, as_of=AS_OF)
+        self.assertEqual(
+            result.fee["fee_schedule_version"],
+            f"{app.FEES.schedule_id}#{app.FEES.version}",
+        )
+
+    def test_malformed_fee_schedule_fails_at_load(self):
+        with tempfile.TemporaryDirectory() as directory:
+            broken = Path(directory) / "fees.json"
+            broken.write_text(json.dumps({"schedule_id": "x", "version": "1"}))
+            with self.assertRaises(app.ValidationError):
+                app._load_fee_schedule(broken)
+
     def test_form_example_four_year_search_short_is_17(self):
         # Page 2 example: four year search + one certified short copy = $17.
         payload = self.build(
@@ -380,6 +449,28 @@ class CC2002BTests(unittest.TestCase):
                     checked["passed"],
                     [c for c in checked["checks"] if not c["passed"]],
                 )
+
+    def test_same_payload_fills_to_identical_bytes(self):
+        """A receipt's output_hash is only worth anything if someone else can
+        rebuild the same bytes. MuPDF stamps a random /ID per save, so this
+        would fail without the deterministic re-save in fill_final.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            first, _ = self.fill(self.party, directory, "a.pdf")
+            second, _ = self.fill(self.party, directory, "b.pdf")
+            self.assertEqual(
+                first.read_bytes(),
+                second.read_bytes(),
+                "identical payloads must produce byte-identical PDFs",
+            )
+
+    def test_different_payload_changes_output_bytes(self):
+        """Guards the obvious way to fake the test above."""
+        with tempfile.TemporaryDirectory() as directory:
+            first, _ = self.fill(self.party, directory, "a.pdf")
+            other = self.build(requester_name="Someone Else Entirely")
+            second, _ = self.fill(other, directory, "b.pdf")
+            self.assertNotEqual(first.read_bytes(), second.read_bytes())
 
     def test_cli_deletes_pdf_and_skips_proof_when_check_fails(self):
         """The CLI must never release a PDF the checker itself rejects."""
@@ -532,6 +623,132 @@ class CC2002BTests(unittest.TestCase):
                 "legitimate ink to pdfium's brightness-only check — if "
                 "pdfium also flags it, this test isn't isolating what "
                 "ink_is_black catches that the second renderer can't",
+            )
+
+
+class ReceiptSigningTests(unittest.TestCase):
+    """A hash proves nothing was altered. A signature proves who wrote it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.payload_path = SAMPLES / "01_party_short.json"
+        cls.private_hex, cls.public_hex = app.generate_signing_key()
+
+    def file_signed(self, directory, name="signed.pdf"):
+        """Run the real CLI with a signing key set, as a filer would."""
+        output = Path(directory) / name
+        with mock.patch.dict(os.environ, {app.SIGNING_KEY_ENV: self.private_hex}):
+            code = app.main([str(self.payload_path), str(output)])
+        self.assertEqual(code, 0)
+        return output
+
+    def test_signed_filing_verifies_against_the_pinned_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.file_signed(directory)
+            result = app.verify_filing(output, expected_public_key=self.public_hex)
+            self.assertTrue(
+                result["passed"],
+                [c for c in result["checks"] if not c["passed"]],
+            )
+
+    def test_altered_pdf_breaks_the_output_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.file_signed(directory)
+            raw = bytearray(output.read_bytes())
+            raw[len(raw) // 2] ^= 0x01
+            output.write_bytes(bytes(raw))
+            result = app.verify_filing(output, expected_public_key=self.public_hex)
+            self.assertFalse(result["passed"])
+            failed = [c["check"] for c in result["checks"] if not c["passed"]]
+            self.assertIn("output_hash_matches_pdf", failed)
+
+    def test_edited_receipt_breaks_the_signature(self):
+        """Rewriting the fee and leaving the signature in place must not pass."""
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.file_signed(directory)
+            proof_path = Path(str(output) + ".proof.json")
+            receipt = json.loads(proof_path.read_text())
+            receipt["fee"]["total"] = 0.0
+            proof_path.write_text(json.dumps(receipt, indent=2))
+            result = app.verify_filing(output, expected_public_key=self.public_hex)
+            self.assertFalse(result["passed"])
+            failed = [c["check"] for c in result["checks"] if not c["passed"]]
+            self.assertIn("signature_valid", failed)
+
+    def test_resigning_with_another_key_fails_the_pin(self):
+        """A forger can produce a self-consistent receipt+signature pair;
+        pinning the expected key is what actually rejects it."""
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.file_signed(directory)
+            proof_path = Path(str(output) + ".proof.json")
+            receipt = json.loads(proof_path.read_text())
+            receipt["fee"]["total"] = 0.0
+            proof_path.write_text(json.dumps(receipt, indent=2))
+
+            attacker_hex, _ = app.generate_signing_key()
+            with mock.patch.dict(os.environ, {app.SIGNING_KEY_ENV: attacker_hex}):
+                forged = app.sign_receipt(receipt, app.load_signing_key())
+            app.write_signature(forged, output)
+
+            unpinned = app.verify_filing(output)
+            self.assertTrue(
+                all(
+                    c["passed"]
+                    for c in unpinned["checks"]
+                    if c["check"] == "signature_valid"
+                ),
+                "a forger's own signature is internally consistent",
+            )
+            pinned = app.verify_filing(output, expected_public_key=self.public_hex)
+            self.assertFalse(pinned["passed"])
+            failed = [c["check"] for c in pinned["checks"] if not c["passed"]]
+            self.assertIn("signer_is_expected_key", failed)
+
+    def test_verification_without_a_trusted_key_is_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.file_signed(directory)
+            result = app.verify_filing(output)
+            self.assertFalse(
+                result["passed"], "an unpinned signature proves no authorship"
+            )
+
+    def test_unsigned_filing_is_reported_as_unsigned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "unsigned.pdf"
+            with mock.patch.dict(os.environ, {app.SIGNING_KEY_ENV: ""}):
+                self.assertEqual(app.main([str(self.payload_path), str(output)]), 0)
+            self.assertFalse(Path(str(output) + ".proof.json.sig").exists())
+            result = app.verify_filing(output)
+            self.assertFalse(result["passed"])
+            failed = [c["check"] for c in result["checks"] if not c["passed"]]
+            self.assertIn("signature_present", failed)
+
+    def test_malformed_signing_key_is_rejected_before_filing(self):
+        """Fail before drawing, so a bad key never leaves a stray PDF behind."""
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out.pdf"
+            with mock.patch.dict(os.environ, {app.SIGNING_KEY_ENV: "not-hex-at-all"}):
+                self.assertEqual(app.main([str(self.payload_path), str(output)]), 1)
+            self.assertFalse(output.exists())
+            self.assertFalse(Path(str(output) + ".proof.json").exists())
+
+    def test_third_party_can_rebuild_the_signed_hash(self):
+        """The point of the whole exercise: someone holding only the payload
+        and the signed receipt can regenerate the PDF and get the same bytes.
+        Determinism is what makes the signature worth checking."""
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.file_signed(directory)
+            receipt = json.loads(Path(str(output) + ".proof.json").read_text())
+            rebuilt = Path(directory) / "rebuilt.pdf"
+            app_obj = app.load_application(self.payload_path)
+            app.fill_final(
+                app.form_values(app_obj),
+                rebuilt,
+                as_of=date.fromisoformat(receipt["as_of"]),
+            )
+            self.assertEqual(
+                hashlib.sha256(rebuilt.read_bytes()).hexdigest(),
+                receipt["output_hash"],
             )
 
 

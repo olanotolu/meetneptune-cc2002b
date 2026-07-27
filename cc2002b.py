@@ -1,24 +1,18 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#   "pymupdf==1.26.6",
-#   "pikepdf==8.7.1",
-#   "pypdfium2==5.9.0",
-#   "pydantic==2.11.9",
-# ]
-# ///
 """NYC Form CC2002B — deterministic filing engine.
 
 JSON → strict schema → validate → fingerprint gate → flat black ink →
-atomic PDF + proof receipt → reopen and prove.
+byte-identical PDF + signed proof receipt → reopen and prove.
 
 Usage
 -----
     python cc2002b.py payload.json [output.pdf]
     python cc2002b.py --check filled.pdf payload.json [report.json]
+    python cc2002b.py --verify filled.pdf [pubkey_hex]
+    python cc2002b.py --keygen [key.hex]
+    python cc2002b.py --pubkey
     python cc2002b.py --extract-blank packet.pdf cc2002b_blank.pdf
 
-Dependencies pinned here (PEP 723) and in requirements.txt. Same pins.
+Dependencies live in pyproject.toml, pinned by uv.lock. One source of truth.
 """
 
 from __future__ import annotations
@@ -33,9 +27,13 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
+import pikepdf
 import pymupdf
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -52,6 +50,7 @@ from pydantic import (
 ROOT = Path(__file__).resolve().parent
 BLANK = ROOT / "00_packet" / "cc2002b_blank.pdf"
 SPEC_PATH = ROOT / "cc2002b.spec.json"
+FEES_PATH = ROOT / "cc2002b.fees.json"
 HELV = "helv"
 FONT_SIZES = (10, 9, 8)  # try largest first; ValueError at the floor
 DPI = 150 / 72           # checker raster scale (device pixels per point)
@@ -215,7 +214,9 @@ def assert_blank(
             f"blank form page size changed: got {got_size}, want {spec['page_size']}"
         )
     if bool(doc.is_form_pdf) != spec["acroform_expected"]:
-        raise ValueError("blank AcroForm presence does not match the approved fingerprint")
+        raise ValueError(
+            "blank AcroForm presence does not match the approved fingerprint"
+        )
     text = " ".join(page.get_text().split())
     missing = [a for a in spec["anchors"] if a not in text]
     if missing:
@@ -303,13 +304,11 @@ class AuthLawEnforcement(BaseModel):
 # extra="forbid" makes leaked fields (e.g. {"kind": "party", "relation": "child"})
 # a schema rejection instead of a silent drop.
 Authorization = Annotated[
-    Union[
-        AuthParty,
-        AuthWrittenAuthorization,
-        AuthAttorney,
-        AuthRelation,
-        AuthLawEnforcement,
-    ],
+    AuthParty
+    | AuthWrittenAuthorization
+    | AuthAttorney
+    | AuthRelation
+    | AuthLawEnforcement,
     Field(discriminator="kind"),
 ]
 
@@ -388,6 +387,7 @@ def validate(
     *,
     as_of: date | None = None,
     spec: dict[str, Any] | None = None,
+    fees: FeeSchedule | None = None,
 ) -> ValidationResult:
     """Business-rule layer. Schema shape is already guaranteed by Pydantic;
     this catches what a validly-shaped payload can still get wrong.
@@ -396,19 +396,23 @@ def validate(
     """
     as_of = as_of or date.today()
     spec = spec or SPEC
+    fees = fees or FEES
     errors: list[str] = []
     notes: list[str] = []
 
-    if app.certificate_type == "other":
-        # Checkbox exists; schedule never prices it. Inventing a fee is worse
-        # than refusing to print.
+    if not fees.is_priced(app.certificate_type):
+        # The checkbox exists; the schedule never prices it. Inventing a fee is
+        # worse than refusing to print.
         errors.append(
-            "certificate_type is 'other' — fee schedule has no defined price for "
-            "it. Confirm with the City Clerk (311 or 212-NEW-YORK) before this "
-            "can be filled; refusing to generate a PDF with an unknown fee "
-            "attached."
+            f"certificate_type is '{app.certificate_type}' — "
+            f"{fees.unpriced_reason(app.certificate_type)}. Confirm with the "
+            f"City Clerk ({fees.ambiguity.contact}) before this can be filled; "
+            f"refusing to generate a PDF with an unknown fee attached."
         )
-        notes.append("Fee unresolved: 'other' has no defined price on page 2")
+        notes.append(
+            f"Fee unresolved: '{app.certificate_type}' has no defined price in "
+            f"{fees.schedule_id}#{fees.version}"
+        )
         return ValidationResult(False, errors, notes)
 
     auth = app.authorization
@@ -446,12 +450,12 @@ def validate(
             errors.append(f"{label} is required")
 
     # Birth dates — only future check remains (schema handles the rest)
-    for value, label in (
+    for birth_date, label in (
         (app.spouse_a.birth_date, "spouse A birth date"),
         (app.spouse_b.birth_date, "spouse B birth date"),
     ):
-        if value > as_of:
-            errors.append(f"{label} {value} is in the future")
+        if birth_date > as_of:
+            errors.append(f"{label} {birth_date} is in the future")
 
     # Borough
     borough = marriage.borough.strip()
@@ -525,7 +529,7 @@ def validate(
     if not errors:
         fee, fee_notes = calculate_fee(
             app.certificate_type, app.copies, marr.year,
-            marriage.additional_search_years,
+            marriage.additional_search_years, fees=fees,
         )
         notes.extend(fee_notes)
         return ValidationResult(True, errors, notes, fee)
@@ -534,7 +538,69 @@ def validate(
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5. Fee policy — ambiguity is visible, never silent
+#
+# Prices come from page 3 of the packet, which is a different document on a
+# different clock than the blank on page 2: the City Clerk can reprice without
+# redrawing the form. So the schedule is its own versioned, validated artifact
+# rather than constants in this file — the last thing here that wasn't data.
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+class CopyRate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    first_copy: float
+    additional_copy: float
+
+    def total_for(self, copies: int) -> float:
+        return self.first_copy + (copies - 1) * self.additional_copy
+
+
+class SearchRate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    first_year: float
+    second_year: float
+    each_year_after: float
+
+    def total_for(self, years: int) -> float:
+        if years <= 1:
+            return self.first_year
+        return self.second_year + (years - 2) * self.each_year_after
+
+
+class FeeAmbiguity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    applies_to: list[str]
+    alternative_rate: CopyRate
+    reasoning: str
+    contact: str
+
+
+class FeeSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schedule_id: str
+    version: str
+    source: str
+    currency: str
+    copy_rates: dict[str, CopyRate]
+    unpriced_types: dict[str, str]
+    search: SearchRate
+    ambiguity: FeeAmbiguity
+
+    def is_priced(self, certificate_type: str) -> bool:
+        return certificate_type in self.copy_rates
+
+    def unpriced_reason(self, certificate_type: str) -> str:
+        return self.unpriced_types.get(
+            certificate_type, "the schedule defines no price for this type"
+        )
+
+
+def _load_fee_schedule(path: Path = FEES_PATH) -> FeeSchedule:
+    """Validated at import: a malformed schedule fails here, not mid-filing."""
+    return FeeSchedule.model_validate_json(path.read_text())
+
+
+FEES: FeeSchedule = _load_fee_schedule()
 
 
 def calculate_fee(
@@ -542,51 +608,59 @@ def calculate_fee(
     copies: int,
     marriage_year: int,
     extra_years: list[int],
+    *,
+    fees: FeeSchedule | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
+    fees = fees or FEES
     notes: list[str] = []
-    if certificate_type == "short":
-        copy_fee = 15.00 + (copies - 1) * 10.00
-        first_copy, additional = 15.00, 10.00
-    else:
-        # Page 2 says $15/$10 *and* $35/$30 for the same purchase.
-        # We bill type-specific. Rationale is part of the receipt.
-        copy_fee = 35.00 + (copies - 1) * 30.00
-        first_copy, additional = 35.00, 30.00
+    rate = fees.copy_rates[certificate_type]
+    copy_fee = rate.total_for(copies)
+
+    ambiguous = certificate_type in fees.ambiguity.applies_to
+    alternative: float | None = None
+    if ambiguous:
+        # The competing reading priced out, rather than a hand-written figure
+        # in the note text: the exposure scales with copies, and a constant
+        # would only ever be right for an order of one.
+        alternative = fees.ambiguity.alternative_rate.total_for(copies)
         notes.append(
-            "AMBIGUOUS FEE: The instructions first provide a broad "
-            "certified-copy rate of $15 for the initial copy and $10 for "
-            "each additional copy. They later distinguish certificate "
-            "types, pricing an extended form at $35/$30 and a short form "
-            "at $15/$10. I treat the later, type-specific rule as "
-            "controlling. Because the earlier language is broad enough to "
-            "create a conflict, extended-form receipts record the "
-            "interpretation, require review, and show the $20.00 "
-            "difference under the alternative reading. Confirm with the "
-            "City Clerk (311 or 212-NEW-YORK) if disputed."
+            f"AMBIGUOUS FEE: {fees.ambiguity.reasoning} Billed "
+            f"${copy_fee:.2f} for {copies} "
+            f"cop{'y' if copies == 1 else 'ies'}; the alternative reading "
+            f"gives ${alternative:.2f}, a ${abs(copy_fee - alternative):.2f} "
+            f"difference. Confirm with the City Clerk "
+            f"({fees.ambiguity.contact}) if disputed."
         )
 
     all_years = set(extra_years)
     all_years.add(marriage_year)
     search_years = max(len(all_years), 1)
-    # First year free; second +$1; each after +$0.50.
-    # Example on form: 4-year search + one short copy = $17.
-    search_fee = 1.00 + (search_years - 2) * 0.50 if search_years > 1 else 0.0
+    search_fee = fees.search.total_for(search_years)
     total = copy_fee + search_fee
 
-    return {
+    fee: dict[str, Any] = {
         "fee_status": "resolved",
+        "fee_schedule_version": f"{fees.schedule_id}#{fees.version}",
+        "currency": fees.currency,
         "copy_fee": round(copy_fee, 2),
         "search_fee": round(search_fee, 2),
         "total": round(total, 2),
-        "requires_review": certificate_type == "extended",
+        "requires_review": ambiguous,
         "breakdown": {
             "form_type": certificate_type,
             "num_copies": copies,
-            "first_copy": first_copy,
-            "additional_copy": additional,
+            "first_copy": rate.first_copy,
+            "additional_copy": rate.additional_copy,
             "years_searched": search_years,
         },
-    }, notes
+    }
+    if alternative is not None:
+        fee["alternative_reading"] = {
+            "copy_fee": round(alternative, 2),
+            "total": round(alternative + search_fee, 2),
+            "difference": round(abs(copy_fee - alternative), 2),
+        }
+    return fee, notes
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -701,6 +775,33 @@ def _marked_checkboxes(payload: dict, spec: dict[str, Any]) -> set[str | None]:
     }
 
 
+def _save_deterministic(doc: pymupdf.Document, output_path: Path) -> None:
+    """Atomic save with a content-derived /ID.
+
+    MuPDF stamps a fresh random /ID on every save, so two runs over the same
+    payload produced different bytes — and a receipt whose output_hash nobody
+    else could reproduce. pikepdf derives /ID from document content instead,
+    the same discipline extract_blank already applied to the blank.
+    """
+    staged = Path(str(output_path) + ".stage")
+    tmp = Path(str(output_path) + ".tmp")
+    try:
+        doc.save(str(staged))
+        with pikepdf.open(staged) as pdf:
+            # A wall-clock stamp would defeat the point as surely as a random /ID.
+            info = pdf.trailer.get("/Info")
+            if info is not None:
+                for key in ("/CreationDate", "/ModDate"):
+                    if key in info:
+                        del info[key]
+            pdf.save(tmp, deterministic_id=True)
+        os.replace(tmp, output_path)
+    finally:
+        for leftover in (staged, tmp):
+            if leftover.exists():
+                leftover.unlink()
+
+
 def fill_final(
     payload: dict,
     output_path: str | Path,
@@ -749,15 +850,8 @@ def fill_final(
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_pdf = str(output_path) + ".tmp"
-        doc.save(tmp_pdf)
-        os.replace(tmp_pdf, output_path)
+        _save_deterministic(doc, output_path)
         return spec
-    except Exception:
-        tmp_pdf = str(output_path) + ".tmp"
-        if os.path.exists(tmp_pdf):
-            os.remove(tmp_pdf)
-        raise
     finally:
         doc.close()
 
@@ -802,9 +896,12 @@ def build_proof_receipt(
             "total": fee.get("total"),
             "copy_fee": fee.get("copy_fee"),
             "search_fee": fee.get("search_fee"),
+            "currency": fee.get("currency"),
             "requires_review": fee.get("requires_review", False),
             "breakdown": fee.get("breakdown"),
             "fee_status": fee.get("fee_status"),
+            "fee_schedule_version": fee.get("fee_schedule_version"),
+            "alternative_reading": fee.get("alternative_reading"),
         },
         "notes": list(validation.notes),
         "checks_passed": passed,
@@ -817,17 +914,195 @@ def build_proof_receipt(
 def write_proof_receipt(receipt: dict[str, Any], pdf_path: Path) -> Path:
     """Write the proof receipt JSON next to the PDF."""
     proof_path = Path(str(pdf_path) + ".proof.json")
-    tmp_proof = str(proof_path) + ".tmp"
-    try:
-        with open(tmp_proof, "w") as f:
-            json.dump(receipt, f, indent=2)
-            f.write("\n")
-        os.replace(tmp_proof, proof_path)
-    except Exception:
-        if os.path.exists(tmp_proof):
-            os.remove(tmp_proof)
-        raise
+    _atomic_write_json(receipt, proof_path)
     return proof_path
+
+
+def _atomic_write_json(obj: Any, path: Path) -> None:
+    tmp = str(path) + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(obj, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7b. Receipt signing (Ed25519)
+#
+# The hashes above prove a file hasn't been altered since it was written.
+# They don't prove who wrote it — anyone can regenerate a receipt. A detached
+# signature over the canonical receipt closes that gap: with the PDF, the
+# receipt, the signature, and a trusted public key, a third party can verify
+# the filing without this repo, and (because output is byte-deterministic)
+# rebuild the PDF and get the same hash.
+# ═══════════════════════════════════════════════════════════════════════════
+
+SIGNING_KEY_ENV = "CC2002B_SIGNING_KEY"
+PUBLIC_KEY_ENV = "CC2002B_PUBLIC_KEY"
+
+
+def canonical_receipt_bytes(receipt: dict[str, Any]) -> bytes:
+    """The exact bytes signer and verifier both agree to hash over."""
+    return json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _public_hex(public_key: ed25519.Ed25519PublicKey) -> str:
+    return public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    ).hex()
+
+
+def generate_signing_key() -> tuple[str, str]:
+    """A fresh Ed25519 keypair as (private_hex, public_hex)."""
+    key = ed25519.Ed25519PrivateKey.generate()
+    private_hex = key.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).hex()
+    return private_hex, _public_hex(key.public_key())
+
+
+def load_signing_key() -> ed25519.Ed25519PrivateKey | None:
+    """Signing key from the environment, or None if filings go unsigned."""
+    raw = os.environ.get(SIGNING_KEY_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        seed = bytes.fromhex(raw)
+    except ValueError as exc:
+        raise ValueError(f"{SIGNING_KEY_ENV} must be hex-encoded") from exc
+    if len(seed) != 32:
+        raise ValueError(
+            f"{SIGNING_KEY_ENV} must be a 32-byte Ed25519 seed "
+            f"(64 hex chars), got {len(seed)} bytes"
+        )
+    return ed25519.Ed25519PrivateKey.from_private_bytes(seed)
+
+
+def sign_receipt(
+    receipt: dict[str, Any], key: ed25519.Ed25519PrivateKey
+) -> dict[str, str]:
+    return {
+        "algorithm": "ed25519",
+        "public_key": _public_hex(key.public_key()),
+        "signature": key.sign(canonical_receipt_bytes(receipt)).hex(),
+    }
+
+
+def write_signature(signature: dict[str, str], pdf_path: Path) -> Path:
+    sig_path = Path(str(pdf_path) + ".proof.json.sig")
+    _atomic_write_json(signature, sig_path)
+    return sig_path
+
+
+def verify_filing(
+    pdf_path: str | Path,
+    *,
+    expected_public_key: str | None = None,
+) -> dict[str, Any]:
+    """Verify a filing from its artifacts alone — no blank, no payload, no repo.
+
+    Answers three questions: are these bytes the ones the receipt describes,
+    was the receipt signed by the holder of a private key, and is that key the
+    one the verifier expected.
+    """
+    pdf_path = Path(pdf_path)
+    proof_path = Path(str(pdf_path) + ".proof.json")
+    sig_path = Path(str(pdf_path) + ".proof.json.sig")
+    results: list[dict[str, Any]] = []
+
+    if not pdf_path.exists():
+        return {
+            "passed": False,
+            "checks": [{
+                "check": "pdf_present",
+                "passed": False,
+                "detail": f"no such file: {pdf_path}",
+            }],
+        }
+    if not proof_path.exists():
+        return {
+            "passed": False,
+            "checks": [{
+                "check": "receipt_present",
+                "passed": False,
+                "detail": f"no proof receipt at {proof_path}",
+            }],
+        }
+
+    receipt = json.loads(proof_path.read_text())
+    actual_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+    claimed = receipt.get("output_hash", "")
+    results.append({
+        "check": "output_hash_matches_pdf",
+        "passed": actual_hash == claimed,
+        "detail": f"receipt claims {claimed[:16]}…, pdf is {actual_hash[:16]}…",
+    })
+
+    if not sig_path.exists():
+        results.append({
+            "check": "signature_present",
+            "passed": False,
+            "detail": (
+                f"no detached signature at {sig_path}; the receipt proves "
+                f"integrity but not authorship"
+            ),
+        })
+        return {"passed": False, "checks": results}
+
+    sig = json.loads(sig_path.read_text())
+    algorithm = sig.get("algorithm")
+    results.append({
+        "check": "signature_algorithm",
+        "passed": algorithm == "ed25519",
+        "detail": f"got {algorithm!r}, want 'ed25519'",
+    })
+
+    signer = sig.get("public_key", "")
+    try:
+        public_key = ed25519.Ed25519PublicKey.from_public_bytes(
+            bytes.fromhex(signer)
+        )
+        public_key.verify(
+            bytes.fromhex(sig.get("signature", "")),
+            canonical_receipt_bytes(receipt),
+        )
+        valid, detail = True, f"valid ed25519 signature by {signer[:16]}…"
+    except (InvalidSignature, ValueError) as exc:
+        valid = False
+        detail = f"signature does not verify against the receipt: {exc}"
+    results.append({
+        "check": "signature_valid",
+        "passed": valid,
+        "detail": detail,
+    })
+
+    # A signature with an unpinned key proves only that *somebody* signed it.
+    if expected_public_key:
+        results.append({
+            "check": "signer_is_expected_key",
+            "passed": signer == expected_public_key.strip().lower(),
+            "detail": f"signed by {signer[:16]}…, expected {expected_public_key[:16]}…",
+        })
+    else:
+        results.append({
+            "check": "signer_is_expected_key",
+            "passed": False,
+            "detail": (
+                f"no trusted key given, so authorship is unverified — pass the "
+                f"expected public key or set {PUBLIC_KEY_ENV} (signer claims "
+                f"{signer[:16]}…)"
+            ),
+        })
+
+    return {"passed": all(r["passed"] for r in results), "checks": results}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1115,26 +1390,16 @@ def _pdfium_render(path: Path) -> tuple[bytes, int, int]:
         doc.close()
 
 
-def _check_layer_c_pdfium(
-    filled_path: Path,
-    payload: dict,
-    fm: dict,
-    *,
-    as_of: date,
-    spec: dict[str, Any],
-) -> list[dict]:
-    """Cross-check layer B with an independent renderer. If mupdf and pdfium
-    disagree, it's a rendering artifact, not proof the form is correct.
+def _pdfium_dark_counts(
+    filled_path: Path, fm: dict
+) -> tuple[dict[str, int], int]:
+    """Per-field dark-pixel counts and the stray count, through pdfium.
+
+    Shared with tools/calibrate_raster.py so the calibration baseline and the
+    live check can never be measuring two different things.
     """
-    try:
-        b_bytes, bw, bh = _pdfium_render(BLANK)
-        f_bytes, fw, fh = _pdfium_render(Path(filled_path))
-    except ImportError:
-        return [{
-            "check": "pdfium_cross_check:available",
-            "passed": False,
-            "detail": "pypdfium2 not installed; second-renderer cross-check skipped",
-        }]
+    b_bytes, bw, bh = _pdfium_render(BLANK)
+    f_bytes, fw, fh = _pdfium_render(Path(filled_path))
 
     width, height = min(bw, fw), min(bh, fh)
     b_stride, f_stride = bw * 3, fw * 3
@@ -1160,6 +1425,28 @@ def _check_layer_c_pdfium(
                     break
             else:
                 stray += 1
+    return dark, stray
+
+
+def _check_layer_c_pdfium(
+    filled_path: Path,
+    payload: dict,
+    fm: dict,
+    *,
+    as_of: date,
+    spec: dict[str, Any],
+) -> list[dict]:
+    """Cross-check layer B with an independent renderer. If mupdf and pdfium
+    disagree, it's a rendering artifact, not proof the form is correct.
+    """
+    try:
+        dark, stray = _pdfium_dark_counts(Path(filled_path), fm)
+    except ImportError:
+        return [{
+            "check": "pdfium_cross_check:available",
+            "passed": False,
+            "detail": "pypdfium2 not installed; second-renderer cross-check skipped",
+        }]
 
     results: list[dict] = [{
         "check": "pdfium_cross_check:no_stray_ink",
@@ -1273,13 +1560,11 @@ def check_correctness(
 
 
 def extract_blank(packet_path: str | Path, out_path: str | Path, page: int = 2) -> Path:
-    """Extract one page from the packet into a blank form. pikepdf is imported
-    here (not at module top) because the hot path never touches this.
+    """Extract one page from the packet into a blank form.
 
-    deterministic_id=True pins /ID so the SHA-256 is reproducible.
+    deterministic_id=True pins /ID so the SHA-256 is reproducible — same reason
+    _save_deterministic uses it on the way out.
     """
-    import pikepdf
-
     packet_path = Path(packet_path)
     out_path = Path(out_path)
     with pikepdf.open(packet_path) as src:
@@ -1299,12 +1584,12 @@ def extract_blank(packet_path: str | Path, out_path: str | Path, page: int = 2) 
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _print_check(result: dict[str, Any]) -> int:
+def _print_check(result: dict[str, Any], label: str = "Check") -> int:
     checks = result.get("checks", [])
     passed = sum(1 for c in checks if c.get("passed"))
     total = len(checks)
     status = "PASSED" if result.get("passed") else "FAILED"
-    print(f"Check:   {status}  ({passed}/{total})")
+    print(f"{label + ':':9}{status}  ({passed}/{total})")
     if not result.get("passed"):
         for c in checks:
             if not c.get("passed"):
@@ -1331,12 +1616,49 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Extracted: {path}")
         print(f"SHA-256:   {digest}")
         if digest == SPEC["blank_sha256"]:
-            print(
-                f"Spec:      {SPEC['form_id']}@{SPEC['revision']}#{SPEC['version']} (approved)"
-            )
+            version = f"{SPEC['form_id']}@{SPEC['revision']}#{SPEC['version']}"
+            print(f"Spec:      {version} (approved)")
         else:
             print("Spec:      UNKNOWN — approve a new cc2002b.spec.json before filling")
         return 0
+
+    # --keygen [key.hex]
+    if argv[0] == "--keygen":
+        private_hex, public_hex = generate_signing_key()
+        if len(argv) > 1:
+            key_path = Path(argv[1])
+            key_path.write_text(private_hex + "\n")
+            key_path.chmod(0o600)
+            print(f"Private: {key_path} (mode 600)")
+        else:
+            print(private_hex)
+        print(f"Public:  {public_hex}", file=sys.stderr)
+        return 0
+
+    # --pubkey — the key a verifier should pin, derived from the signing key
+    if argv[0] == "--pubkey":
+        try:
+            key = load_signing_key()
+        except ValueError as exc:
+            print(f"SIGNING KEY REJECTED: {exc}", file=sys.stderr)
+            return 1
+        if key is None:
+            print(f"{SIGNING_KEY_ENV} is not set", file=sys.stderr)
+            return 1
+        print(_public_hex(key.public_key()))
+        return 0
+
+    # --verify filled.pdf [expected_public_key_hex]
+    if argv[0] == "--verify":
+        if len(argv) < 2:
+            print("usage: cc2002b.py --verify filled.pdf [public_key_hex]")
+            return 1
+        expected = (
+            argv[2] if len(argv) > 2 else os.environ.get(PUBLIC_KEY_ENV) or None
+        )
+        return _print_check(
+            verify_filing(argv[1], expected_public_key=expected), "Verify"
+        )
 
     # --check filled.pdf payload.json [report.json]
     if argv[0] == "--check":
@@ -1386,6 +1708,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FINGERPRINT REJECTED: {exc}")
         return 1
 
+    # Resolve the signing key before drawing: a bad key should cost nothing.
+    try:
+        key = load_signing_key()
+    except ValueError as exc:
+        print(f"SIGNING KEY REJECTED: {exc}", file=sys.stderr)
+        return 1
+
     flat = form_values(app)
     fill_final(flat, output_path, as_of=as_of, spec=spec)
 
@@ -1417,6 +1746,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     proof_path = write_proof_receipt(receipt, Path(output_path))
     print(f"Proof:   {proof_path}")
+
+    if key is None:
+        print(
+            f"Signed:  no — set {SIGNING_KEY_ENV} to sign this receipt "
+            f"({SIGNING_KEY_ENV}=$(python cc2002b.py --keygen))",
+            file=sys.stderr,
+        )
+    else:
+        signature = sign_receipt(receipt, key)
+        sig_path = write_signature(signature, Path(output_path))
+        print(f"Signed:  {sig_path} (ed25519, key {signature['public_key'][:16]}…)")
 
     if validation.fee:
         for note in validation.notes:

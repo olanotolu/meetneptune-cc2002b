@@ -1,0 +1,24 @@
+{
+  "schedule_id": "nyc-city-clerk-marriage-records",
+  "version": "1.0.0",
+  "source": "packet page 3 — fee schedule accompanying FORM CC2002B 9/20/2016",
+  "currency": "USD",
+  "copy_rates": {
+    "short": {"first_copy": 15.0, "additional_copy": 10.0},
+    "extended": {"first_copy": 35.0, "additional_copy": 30.0}
+  },
+  "unpriced_types": {
+    "other": "the schedule prices short and extended forms but never prices 'other'"
+  },
+  "search": {
+    "first_year": 0.0,
+    "second_year": 1.0,
+    "each_year_after": 0.5
+  },
+  "ambiguity": {
+    "applies_to": ["extended"],
+    "alternative_rate": {"first_copy": 15.0, "additional_copy": 10.0},
+    "reasoning": "The instructions first provide a broad certified-copy rate of $15 for the initial copy and $10 for each additional copy. They later distinguish certificate types, pricing an extended form at $35/$30 and a short form at $15/$10. I treat the later, type-specific rule as controlling. Because the earlier language is broad enough to create a conflict, receipts for the affected types record the interpretation, require review, and show what the alternative reading would have cost.",
+    "contact": "311 or 212-NEW-YORK"
+  }
+}

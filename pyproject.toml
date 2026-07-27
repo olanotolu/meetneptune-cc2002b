@@ -1,0 +1,57 @@
+[project]
+name = "cc2002b"
+version = "1.0.0"
+description = "Deterministic filing engine for NYC Form CC2002B."
+readme = "README.md"
+# pikepdf 8.7.1 is the ceiling: it ships no cp313 wheel. pymupdf's cp310-abi3
+# wheels would run anywhere >=3.10.
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "pymupdf==1.26.6",
+    "pikepdf==8.7.1",
+    "pypdfium2==5.9.0",
+    "pydantic==2.11.9",
+    "cryptography==46.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "hypothesis==6.141.1",
+    "mypy==1.18.2",
+    "ruff==0.14.2",
+]
+
+# Script repo, not a library: uv manages the environment without building
+# cc2002b.py into a wheel.
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "RUF",
+]
+ignore = [
+    # Operator-facing messages quote the form and use typographic dashes and
+    # ellipses deliberately. These strings get printed, never parsed.
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["cc2002b.py", "tools", "tests"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

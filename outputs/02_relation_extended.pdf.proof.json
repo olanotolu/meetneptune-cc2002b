@@ -2,7 +2,7 @@
   "template_hash": "0a34ee8217e65105fa28d61f46a7af1cea585340a36238eb02da10796442ebca",
   "form_spec_version": "CC2002B@9/20/2016#1.0.0",
   "input_hash": "171068ed876533db31dc05a7e84dbba13f4fb6174d213a351fd493c12d4c6957",
-  "output_hash": "9769eecd64278d840cef4ffc1c417c7b2cfb18603b7e995122061c4b54dab6d7",
+  "output_hash": "f11737f43e4deba06223e48fe6018354735bcb90d65a4614e40da843b5157fed",
   "renderer": {
     "engine": "mupdf",
     "pymupdf": "1.26.6"
@@ -15,6 +15,7 @@
     "total": 67.0,
     "copy_fee": 65.0,
     "search_fee": 2.0,
+    "currency": "USD",
     "requires_review": true,
     "breakdown": {
       "form_type": "extended",
@@ -23,10 +24,16 @@
       "additional_copy": 30.0,
       "years_searched": 4
     },
-    "fee_status": "resolved"
+    "fee_status": "resolved",
+    "fee_schedule_version": "nyc-city-clerk-marriage-records#1.0.0",
+    "alternative_reading": {
+      "copy_fee": 25.0,
+      "total": 27.0,
+      "difference": 40.0
+    }
   },
   "notes": [
-    "AMBIGUOUS FEE: The instructions first provide a broad certified-copy rate of $15 for the initial copy and $10 for each additional copy. They later distinguish certificate types, pricing an extended form at $35/$30 and a short form at $15/$10. I treat the later, type-specific rule as controlling. Because the earlier language is broad enough to create a conflict, extended-form receipts record the interpretation, require review, and show the $20.00 difference under the alternative reading. Confirm with the City Clerk (311 or 212-NEW-YORK) if disputed."
+    "AMBIGUOUS FEE: The instructions first provide a broad certified-copy rate of $15 for the initial copy and $10 for each additional copy. They later distinguish certificate types, pricing an extended form at $35/$30 and a short form at $15/$10. I treat the later, type-specific rule as controlling. Because the earlier language is broad enough to create a conflict, receipts for the affected types record the interpretation, require review, and show what the alternative reading would have cost. Billed $65.00 for 2 copies; the alternative reading gives $25.00, a $40.00 difference. Confirm with the City Clerk (311 or 212-NEW-YORK) if disputed."
   ],
   "checks_passed": 116,
   "checks_failed": 0,
