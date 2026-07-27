@@ -895,10 +895,48 @@ def calculate_fee(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+LINE_SPACING = 1.15  # line-height multiplier for wrapped (2+ line) text
+
+
+def _text_width(text: str, fontname: str, fontfile: str | None, size: float) -> float:
+    if fontfile is None:
+        return pymupdf.get_text_length(text, fontname, size)
+    return _unicode_font().text_length(text, fontsize=size)
+
+
+def _wrap_lines(
+    text: str, w: float, fontname: str, fontfile: str | None, size: float
+) -> tuple[str, ...]:
+    """Greedy word-wrap at this font size.
+
+    Returns (text,) unchanged whenever the whole string already fits one
+    line — a field that fit before this existed must keep fitting on
+    exactly one line, byte-for-byte, not get reflowed for no reason.
+    """
+    budget = w - 4
+    if _text_width(text, fontname, fontfile, size) <= budget:
+        return (text,)
+    lines: list[str] = []
+    current = ""
+    for word in text.split(" "):
+        candidate = f"{current} {word}".strip()
+        if _text_width(candidate, fontname, fontfile, size) <= budget:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word  # even if this single word alone overflows —
+            # the fit check below (per-line width) is what actually rejects it
+    if current:
+        lines.append(current)
+    return tuple(lines)
+
+
 def _fit(
     text: str, w: float, h: float, field_name: str = ""
-) -> tuple[float, str, str | None]:
-    """Largest size that fits, plus which font it fits in.
+) -> tuple[float, str, str | None, tuple[str, ...]]:
+    """Largest size that fits — wrapping to more than one line only if the
+    field's own height has room for it — plus which font and which lines.
 
     Latin-1 text stays on base-14 Helvetica — no embedding, smallest
     output, the same font every existing sample and screenshot already
@@ -907,18 +945,25 @@ def _fit(
     valid for a different typeface).
     """
     latin1 = _is_latin1(text)
+    fontname = HELV if latin1 else UNICODE_FONT_NAME
+    fontfile = None if latin1 else str(UNICODE_FONT_PATH)
     for size in FONT_SIZES:
-        tw = (
-            pymupdf.get_text_length(text, HELV, size)
-            if latin1
-            else _unicode_font().text_length(text, fontsize=size)
+        lines = _wrap_lines(text, w, fontname, fontfile, size)
+        fits_width = all(
+            _text_width(ln, fontname, fontfile, size) <= w - 4 for ln in lines
         )
-        if tw <= w - 4 and size <= h - 2:
-            if latin1:
-                return size, HELV, None
-            return size, UNICODE_FONT_NAME, str(UNICODE_FONT_PATH)
+        if len(lines) == 1:
+            # Exact original rule — must not change for anything that
+            # already fit on one line, or every field's chosen size can
+            # silently shift (confirmed: this changed real output before
+            # being caught by a byte-diff against the previous samples).
+            fits_height = size <= h - 2
+        else:
+            fits_height = len(lines) * (size * LINE_SPACING) <= h - 2
+        if fits_width and fits_height:
+            return size, fontname, fontfile, lines
     raise ValueError(
-        f"{field_name}: '{text}' does not fit in {w:.0f}x{h:.0f}pt"
+        f"{field_name}: '{text}' does not fit in {w:.0f}x{h:.0f}pt, even wrapped"
     )
 
 
@@ -1003,19 +1048,30 @@ def fill_final(
                 text = text_for(name, payload, as_of=as_of)
                 if not text:
                     continue
-                size, fontname, fontfile = _fit(
+                size, fontname, fontfile, lines = _fit(
                     text, field_spec["w"], field_spec["h"], name
                 )
+                # Same formula as the original single-line centering,
+                # generalized: reduces to the exact original expression
+                # when len(lines) == 1 (block_height == ascent), so every
+                # field that already fit on one line draws at the exact
+                # same pixel position as before wrapping existed.
                 ascent = size * 0.8
-                y = field_spec["y"] + (field_spec["h"] + ascent) / 2 - 1
-                page.insert_text(
-                    pymupdf.Point(field_spec["x"] + 2, y),
-                    text,
-                    fontname=fontname,
-                    fontfile=fontfile,
-                    fontsize=size,
-                    color=(0, 0, 0),
+                line_height = size * LINE_SPACING
+                block_height = (len(lines) - 1) * line_height + ascent
+                first_y = (
+                    field_spec["y"] + (field_spec["h"] + block_height) / 2
+                    - 1 - (len(lines) - 1) * line_height
                 )
+                for i, line in enumerate(lines):
+                    page.insert_text(
+                        pymupdf.Point(field_spec["x"] + 2, first_y + i * line_height),
+                        line,
+                        fontname=fontname,
+                        fontfile=fontfile,
+                        fontsize=size,
+                        color=(0, 0, 0),
+                    )
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)

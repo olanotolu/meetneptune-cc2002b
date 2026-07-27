@@ -100,7 +100,7 @@ state machine. rejects what a clerk should never receive:
 - not exactly one form type / one sworn box  
 - relation / le inline text only when auth is 4 / 5  
 - inkable only — latin-1 stays on base-14 helvetica; broader names (Nguyễn, Łukasz, Παπαδόπουλος, Дмитрий) fall back to an embedded Unicode font (`fonts/DejaVuSans.ttf`, Bitstream Vera license — see `fonts/LICENSE_DEJAVU`); anything neither font can render (CJK, Arabic, emoji) fails loud with the exact character and codepoint, never a silent `·`  
-- text must fit the measured cell  
+- text must fit the measured cell — wrapped across as many lines as the cell's own height allows first (greedy word-wrap, largest font that fits), only refused once it doesn't fit even wrapped. A single-line field's chosen size/position is provably unaffected by wrapping existing — pinned by `test_single_line_fields_are_unaffected_by_wrapping` after a real regression (found by diffing the three committed samples byte-for-byte, not by inspection) where the height-fit rule briefly changed semantics for text that already fit on one line  
 - `form_type: other` → no price on schedule → refuse  
 
 **50-year + auth 4/5:** note, do not invent a ban. form parentheticals are adjudication paths (legal / le). fill + review note.

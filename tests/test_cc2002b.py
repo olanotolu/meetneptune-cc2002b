@@ -187,6 +187,45 @@ class CC2002BTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertTrue(any("does not fit" in error for error in result.errors))
 
+    def test_wrappable_reason_text_fills_instead_of_rejecting(self):
+        # A real, clerk-acceptable reason that doesn't fit on one line —
+        # refusing this would be rejecting valid input, not catching bad
+        # input, which is the opposite of what validation is supposed to do.
+        long_reason = "Needed for an immigration benefit application filed with USCIS"
+        payload = self.payload(reason_search_copy_needed=long_reason)
+        result = app.validate(payload, as_of=AS_OF)
+        self.assertTrue(result.valid, result.errors)
+        with tempfile.TemporaryDirectory() as directory:
+            output, payload_path = self.fill(payload, directory)
+            checked = app.check_correctness(output, payload_path, as_of=AS_OF)
+            self.assertTrue(
+                checked["passed"],
+                [c for c in checked["checks"] if not c["passed"]],
+            )
+
+    def test_single_line_fields_are_unaffected_by_wrapping(self):
+        # Wrapping must never change the chosen size/position for text
+        # that already fit on one line — confirmed by regenerating all
+        # three committed samples and diffing word-for-word against the
+        # pre-wrapping versions; this pins the underlying rule so a
+        # regression here fails a fast unit test, not just a manual diff.
+        field = app.FIELDS["name_of_person_requesting_search"]
+        size, fontname, fontfile, lines = app._fit(
+            "Sol Lee", field["w"], field["h"], "name_of_person_requesting_search"
+        )
+        self.assertEqual(size, 10)
+        self.assertEqual(lines, ("Sol Lee",))
+
+    def test_even_wrapped_text_can_still_overflow(self):
+        field = app.FIELDS["reason_search_copy_are_needed"]
+        too_long = (
+            "Needed for an immigration benefit application filed with the "
+            "United States Citizenship and Immigration Services office "
+            "located in downtown Manhattan New York"
+        )
+        with self.assertRaises(ValueError):
+            app._fit(too_long, field["w"], field["h"], "reason")
+
     def test_latin1_guard(self):
         result = app.validate(
             self.payload(spouse_a_name="Harold前 Baker"), as_of=AS_OF
