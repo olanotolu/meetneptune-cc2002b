@@ -225,6 +225,7 @@ read top → bottom:
 
 ## two more weeks (not built)
 
-unicode font embed · `measure` command for the next revision · property/mutation fuzz at scale · resolve `other` pricing with 311 · http wrapper around `fill_final`/`check_correctness` if a second consumer needs it (see [cli, not http — and why](#cli-not-http--and-why))
+unicode font embed · property/mutation fuzz at scale · resolve `other` pricing with 311 · http wrapper around `fill_final`/`check_correctness` if a second consumer needs it (see [cli, not http — and why](#cli-not-http--and-why))
 
 ~~second renderer (pdfium) so mupdf does not grade itself alone~~ — built: layer c in step 6.
+~~`measure` command for the next revision~~ — built: `--measure [blank.pdf] [--compare]`. Re-derives the field map from the page's own drawn table rules + label geometry — no hardcoded coordinates. Reproduces all 30 hand-approved fields within 1.2pt. Re-measuring a form revision is now "edit ~20 copy-pasted label strings," not "retype 80 coordinates." Still produces a *candidate* map only — `_FIELD_MAP` stays the hand-approved, fingerprint-gated source of truth for the hot path.

@@ -330,6 +330,34 @@ class CC2002BTests(unittest.TestCase):
                 )
             )
 
+    def test_measure_reproduces_the_approved_field_map(self):
+        candidate = app.measure_blank(app.BLANK)
+        self.assertEqual(
+            set(candidate), set(app.FIELDS) - app.CC2002B_2016.protected,
+            "measure_blank field set drifted from the approved, hand-signed FormSpec "
+            "(protected fields are intentionally excluded — they are never re-measured)",
+        )
+        rows = app.compare_to_approved(candidate, tolerance=2.0)
+        drift = [r for r in rows if r["status"] != "OK"]
+        self.assertFalse(
+            drift,
+            "measure_blank no longer reproduces the approved coordinates within "
+            f"2pt — re-derive and re-approve before trusting it: {drift}",
+        )
+
+    def test_measure_fails_closed_on_a_missing_anchor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mangled = Path(directory) / "mangled.pdf"
+            doc = pymupdf.open(str(app.BLANK))
+            doc[0].add_redact_annot(
+                pymupdf.Rect(140, 280, 340, 300), fill=(1, 1, 1)
+            )
+            doc[0].apply_redactions()
+            doc.save(str(mangled))
+            doc.close()
+            with self.assertRaises(ValueError):
+                app.measure_blank(mangled)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,7 @@ Usage
     python cc2002b.py payload.json [output.pdf]
     python cc2002b.py --check filled.pdf payload.json [report.json]
     python cc2002b.py --extract-blank packet.pdf cc2002b_blank.pdf
+    python cc2002b.py --measure [blank.pdf] [--compare]
 
 Dependencies are pinned here (PEP 723) and in requirements.txt. Same pins.
 The blank form is cc2002b_blank.pdf next to this script (packet page 2).
@@ -1524,7 +1525,258 @@ def extract_blank(packet_path: str | Path, out_path: str | Path, page: int = 2) 
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 10. CLI
+# 10. Deterministic re-measurement (--measure)
+#
+# _FIELD_MAP above was derived by hand: read pymupdf's word/glyph geometry,
+# reason about label gaps and glyph boxes, type ~80 numbers into a dict.
+# That manual step is the one part of this pipeline that isn't provable or
+# fast to redo. This section turns the same four derivation rules into
+# code, anchored on the page's own drawn table rules (not eyeballed row
+# heights), so re-measuring a form revision means editing ~20 copy-pasted
+# label strings — a typo just fails to match a word, it can't silently
+# produce a wrong number — instead of retyping 80 coordinates by hand.
+#
+# This does NOT replace _FIELD_MAP as the hot-path source of truth; that
+# stays hand-approved and frozen behind the fingerprint gate. This produces
+# a CANDIDATE map for comparison or regeneration, and --measure --compare
+# is a regression check that the rules still reproduce the approved one.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_PAD = 2.0
+_RIGHT_MARGIN = 557.56
+_ROW_MIN_WIDTH = 400.0  # separates real table rows from incidental short rules (e.g. the sig line)
+
+
+def _table_row_bands(page: pymupdf.Page) -> list[tuple[float, float]]:
+    """Row boundaries from the page's own drawn table rules, not guesswork.
+
+    Table rules are filled hairline rects ('re'), not stroked lines — a
+    row divider often renders as two rects (split where a column divider
+    crosses it), so coverage is summed per y before filtering.
+    """
+    coverage: dict[float, float] = {}
+    for d in page.get_drawings():
+        for item in d.get("items", []):
+            if item[0] != "re":
+                continue
+            r = item[1]
+            if r.height <= 1.2 and r.width > 5:
+                y = round(r.y0, 1)
+                coverage[y] = coverage.get(y, 0.0) + r.width
+    ys = sorted(y for y, w in coverage.items() if w > _ROW_MIN_WIDTH)
+    return list(zip(ys, ys[1:]))
+
+
+def _find_in_row(words: list, text: str, band: tuple[float, float], occurrence: int = 1):
+    """The nth (reading-order) word matching `text` near the top of `band`.
+
+    Every label anchor on this form — inline or stacked — sits within a
+    point of its row's top rule, never near the bottom. Searching only the
+    top slice of the band (instead of the full band +/- tolerance) is what
+    keeps this from matching the next row's labels when two rows abut
+    tightly, e.g. row 6 ends 1pt above row 7's "Your address:" label.
+    """
+    top, _ = band
+    hits = sorted(
+        (w for w in words if w[4] == text and top - 1.0 <= w[1] <= top + 20.0),
+        key=lambda w: w[0],
+    )
+    if occurrence > len(hits):
+        raise ValueError(
+            f"expected occurrence {occurrence} of {text!r} in row {band}, "
+            f"found {len(hits)} — form layout changed, re-check this anchor"
+        )
+    return hits[occurrence - 1]
+
+
+def _nth_glyph(words: list, glyph: str, occurrence: int):
+    hits = sorted((w for w in words if w[4] == glyph), key=lambda w: w[1])
+    if occurrence > len(hits):
+        raise ValueError(
+            f"expected occurrence {occurrence} of glyph {glyph!r}, found {len(hits)}"
+        )
+    return hits[occurrence - 1]
+
+
+def _underscore_box(words: list, prefix: str) -> tuple[float, float, float, float]:
+    """Box around the underscore run in a merged token like 'the__________'.
+
+    Proportional split by character count — an approximation (the form
+    isn't monospace), accurate to a couple points, which is within the
+    padding budget _fit() already reserves.
+    """
+    for w in words:
+        token = w[4]
+        if token.startswith(prefix) and "_" in token:
+            frac = len(prefix) / len(token)
+            x0 = w[0] + frac * (w[2] - w[0])
+            return x0, w[1], w[2], w[3]
+    raise ValueError(f"no underscore-run token starting with {prefix!r} found")
+
+
+@dataclass(frozen=True)
+class _Anchor:
+    """One derivation rule, in the same vocabulary a human would use to
+    describe the field out loud: 'the box after Month:, before Day:, in
+    the first table row' — not four raw numbers."""
+
+    name: str
+    kind: str  # "inline" | "stacked" | "glyph" | "underscore"
+    row: int = 0                                   # 1-indexed table row
+    left: str | tuple[str, int] | None = None
+    right: str | tuple[str, int] | None = None
+    glyph: str | None = None
+    occurrence: int = 1
+    prefix: str | None = None
+
+
+# Table rows, top to bottom, as they read on the page:
+#   1 date of marriage / borough        5 reason for search / copies
+#   2 other years / license no          6 requester / relationship / phone
+#   3 spouse A name / birthdate         7 address
+#   4 spouse B name / birthdate
+_ANCHOR_SPEC: tuple[_Anchor, ...] = (
+    _Anchor("month", "inline", row=1, left="Month:", right="Day:"),
+    _Anchor("day", "inline", row=1, left="Day:", right="Year:"),
+    _Anchor("year", "inline", row=1, left="Year:", right="Borough"),
+    _Anchor("license_was_issued", "inline", row=1, left="issued:", right=None),
+    _Anchor(
+        "if_uncertain_specify_other_years_you_want_searched", "inline",
+        row=2, left="searched:", right="License",
+    ),
+    _Anchor("license_no", "inline", row=2, left="No.", right=None),
+    _Anchor(
+        "full_legal_name_before_marriage", "inline",
+        row=3, left="marriage:", right="Birth",
+    ),
+    _Anchor("date", "inline", row=3, left="date:", right=None),
+    _Anchor(
+        "full_legal_name_before_marriage_09", "inline",
+        row=4, left="marriage:", right="Birth",
+    ),
+    _Anchor("date_10", "inline", row=4, left="date:", right=None),
+    _Anchor(
+        "reason_search_copy_are_needed", "inline",
+        row=5, left="needed:", right="Number",
+    ),
+    _Anchor(
+        "number_of_copies_requested", "inline",
+        row=5, left="requested:", right=None,
+    ),
+    # row 6/7: label sits on its own line, the writable blank is below it
+    _Anchor(
+        "name_of_person_requesting_search", "stacked",
+        row=6, left="Name", right=("Your", 1),
+    ),
+    _Anchor(
+        "your_relationship_to_either_spouse", "stacked",
+        row=6, left=("Your", 1), right=("Your", 2),
+    ),
+    _Anchor("your_telephone_no", "stacked", row=6, left=("Your", 2), right=None),
+    _Anchor("street", "stacked", row=7, left="Street", right="Apt"),
+    _Anchor("apt_no", "stacked", row=7, left="Apt", right="City"),
+    _Anchor("city", "stacked", row=7, left="City", right="State"),
+    _Anchor("state", "stacked", row=7, left="State", right="Zip"),
+    _Anchor("zip_code", "stacked", row=7, left="Zip", right=None),
+    # same glyph repeated — disambiguated by top-to-bottom order, not position
+    _Anchor("form_short", "glyph", glyph="", occurrence=1),
+    _Anchor("form_extended", "glyph", glyph="", occurrence=2),
+    _Anchor("form_other", "glyph", glyph="", occurrence=3),
+    _Anchor("auth_checkbox_1", "glyph", glyph="(_)", occurrence=1),
+    _Anchor("auth_checkbox_2", "glyph", glyph="(_)", occurrence=2),
+    _Anchor("auth_checkbox_3", "glyph", glyph="(_)", occurrence=3),
+    _Anchor("auth_checkbox_4", "glyph", glyph="(_)", occurrence=4),
+    _Anchor("auth_checkbox_5", "glyph", glyph="(_)", occurrence=5),
+    _Anchor("auth_relation", "underscore", prefix="the"),
+    _Anchor("auth_other_agency", "underscore", prefix="or"),
+    # signature / signature_date deliberately absent: never re-measured,
+    # never filled — see _FIELD_MAP's `protected` set.
+)
+
+
+def _resolve_lr(words: list, spec: str | tuple[str, int] | None, band: tuple[float, float]):
+    if spec is None:
+        return None
+    text, occ = spec if isinstance(spec, tuple) else (spec, 1)
+    return _find_in_row(words, text, band, occ)
+
+
+def measure_blank(blank_path: Path = BLANK) -> dict[str, dict[str, Any]]:
+    """Re-derive the field map from the page's own geometry — no hardcoded
+    coordinates anywhere in this function. A model may one day propose
+    _ANCHOR_SPEC edits for a revised form; this is the mechanical rule
+    that would grade its candidates, same as `check_correctness` grades
+    every filled PDF today."""
+    doc = pymupdf.open(str(blank_path))
+    try:
+        page = doc[0]
+        words = page.get_text("words")
+        bands = _table_row_bands(page)
+        out: dict[str, dict[str, Any]] = {}
+        for a in _ANCHOR_SPEC:
+            if a.kind == "glyph":
+                w = _nth_glyph(words, a.glyph, a.occurrence)
+                out[a.name] = {
+                    "x": round(w[0], 2), "y": round(w[1], 2),
+                    "w": round(w[2] - w[0], 2), "h": round(w[3] - w[1], 2),
+                    "type": "checkbox", "fill": True,
+                }
+                continue
+            if a.kind == "underscore":
+                x0, y0, x1, y1 = _underscore_box(words, a.prefix)
+                out[a.name] = {
+                    "x": round(x0, 2), "y": round(y0, 2),
+                    "w": round(x1 - x0, 2), "h": round(y1 - y0, 2),
+                    "type": "text", "fill": True,
+                }
+                continue
+
+            band = bands[a.row - 1]
+            left = _resolve_lr(words, a.left, band)
+            right = _resolve_lr(words, a.right, band)
+            if a.kind == "inline":
+                x0, y0 = left[2] + _PAD, band[0] + _PAD
+                y1 = band[1] - _PAD
+            else:  # stacked
+                x0, y0 = left[0], left[3] + _PAD
+                y1 = band[1] - _PAD
+            x1 = (right[0] - _PAD) if right is not None else _RIGHT_MARGIN
+            out[a.name] = {
+                "x": round(x0, 2), "y": round(y0, 2),
+                "w": round(x1 - x0, 2), "h": round(y1 - y0, 2),
+                "type": "text", "fill": True,
+            }
+        return out
+    finally:
+        doc.close()
+
+
+def compare_to_approved(
+    candidate: dict[str, dict[str, Any]],
+    approved: dict[str, dict[str, Any]] = FIELDS,
+    tolerance: float = 4.0,
+) -> list[dict[str, Any]]:
+    """Per-field delta report — proof the rules reproduce the hand-approved
+    spec, not just a demo that happens to run."""
+    rows: list[dict[str, Any]] = []
+    for name, cand in sorted(candidate.items()):
+        appr = approved.get(name)
+        if appr is None:
+            rows.append({"field": name, "status": "NOT_IN_APPROVED_SPEC", "delta": None})
+            continue
+        delta = {k: round(cand[k] - appr[k], 2) for k in ("x", "y", "w", "h")}
+        worst = max(abs(v) for v in delta.values())
+        rows.append({
+            "field": name,
+            "status": "OK" if worst <= tolerance else "DRIFT",
+            "delta": delta,
+            "worst": worst,
+        })
+    return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. CLI
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -1584,6 +1836,27 @@ def main(argv: list[str] | None = None) -> int:
                 json.dump(result, report, indent=2)
                 report.write("\n")
         return code
+
+    # --measure [blank.pdf] [--compare]
+    if argv[0] == "--measure":
+        rest = argv[1:]
+        compare = "--compare" in rest
+        rest = [a for a in rest if a != "--compare"]
+        blank_arg = Path(rest[0]) if rest else BLANK
+        try:
+            candidate = measure_blank(blank_arg)
+        except ValueError as exc:
+            print(f"MEASURE FAILED: {exc}")
+            return 1
+        if not compare:
+            print(json.dumps(candidate, indent=2, sort_keys=True))
+            return 0
+        rows = compare_to_approved(candidate)
+        for r in rows:
+            print(f"  {r['status']:20s} {r['field']:55s} {r.get('delta')}")
+        drift = [r for r in rows if r["status"] != "OK"]
+        print(f"\n{len(rows) - len(drift)}/{len(rows)} fields reproduced within tolerance")
+        return 0 if not drift else 1
 
     # fill: payload.json [output.pdf]
     payload_path = Path(argv[0])
