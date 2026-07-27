@@ -37,7 +37,7 @@ json → pydantic schema → validate() → fingerprint check → fill_final() �
 if the check fails, the pdf gets deleted. no proof receipt for a filing the checker itself doesn't believe in — you get a `.failed.json` instead.
 
 **5. prove it doesn't lie to itself.**
-adversarial tests mutate a good pdf (fake signature, second checkbox, white cover, colored ink dark enough to pass a naive check) and assert the *named* check catches it. one test proves the independent renderer catches a signature tamper on its own.
+adversarial tests mutate a good pdf (fake signature, second checkbox, white cover, colored ink dark enough to pass a naive check) and assert the *named* check catches it. one test proves the independent renderer catches a signature tamper on its own. property-based fuzz tests (hypothesis) generate 50 random valid payloads end-to-end through fill + check with zero false rejects, and 50 random mutations (signature ink, extra checkbox, white cover) with zero false accepts.
 
 checkbox crossed, not ticked:
 ![checkbox](docs/visuals/03_form_type_checkbox.png)
@@ -116,5 +116,4 @@ pure function — json in, pdf + proof out. no auth, no sessions, nothing to kee
 ## next
 
 - cjk/arabic/rtl name support
-- property/mutation fuzz at scale
 - resolve `other` pricing with 311
