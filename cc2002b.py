@@ -1553,6 +1553,16 @@ def _table_row_bands(page: pymupdf.Page) -> list[tuple[float, float]]:
     Table rules are filled hairline rects ('re'), not stroked lines — a
     row divider often renders as two rects (split where a column divider
     crosses it), so coverage is summed per y before filtering.
+
+    Evaluated and rejected: pymupdf's built-in page.find_tables(). Tested
+    against this exact document, not just read about — strategy="lines"
+    finds 0 tables here because it looks for stroked lines and this form's
+    rules are filled rects, not strokes. strategy="text" does return a
+    table, but fragments the data region into ~64 misaligned cells that
+    slice through label text mid-word — worse than the 30 boxes below,
+    which reproduce the hand-approved field map within 1.2pt. Keep this
+    hand-rolled version; re-evaluate find_tables() only if a future form
+    revision actually uses stroked lines instead of filled rects.
     """
     coverage: dict[float, float] = {}
     for d in page.get_drawings():
