@@ -170,12 +170,17 @@ each fill also writes `*.proof.json` (hashes, fee, check counts) and `*.fees.jso
 ```bash
 uv run cc2002b.py samples/01_party_short.json outputs/01_party_short.pdf
 uv run cc2002b.py --check outputs/01_party_short.pdf samples/01_party_short.json
-uv run python -m unittest discover -s tests -v
+uv run --with-requirements requirements.txt python -m unittest discover -s tests -v
 ```
 
 Recommended path — `uv` resolves a compatible Python itself from the PEP 723
 header below, regardless of what `python3` defaults to on your machine.
-Confirmed on a genuinely fresh clone with no system Python assumptions.
+Confirmed on a genuinely fresh clone with no system Python assumptions. The
+test command needs `--with-requirements` explicitly: the PEP 723 header only
+attaches its pins when `uv run` targets `cc2002b.py` directly — pointed at
+plain `python` instead, `uv run` gives you a bare interpreter with nothing
+installed, and the suite fails on `ModuleNotFoundError: pymupdf`. Confirmed
+both ways on a fresh clone before writing this sentence.
 
 or, manual venv — **pin the interpreter explicitly**, don't rely on
 whatever `python3` resolves to:
