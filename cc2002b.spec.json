@@ -6,6 +6,14 @@
   "page_count": 1,
   "page_size": [612.0, 792.0],
   "acroform_expected": false,
+  "measurement": {
+    "method": "human-approved overlay from native PDF word coordinates",
+    "coordinate_system": "PDF points, top-left origin",
+    "renderer": "PyMuPDF 1.26.6 / MuPDF 1.26.11",
+    "field_count": 32,
+    "fillable_count": 30,
+    "protected_count": 2
+  },
   "anchors": [
     "MAIL REQUEST FOR MARRIAGE RECORDS",
     "CHECK ONE BOX ONLY",

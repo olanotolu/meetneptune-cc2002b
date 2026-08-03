@@ -7,6 +7,14 @@ __pycache__/
 .DS_Store
 outputs/*.tmp
 outputs/*.stage
+# Regenerable presentation/bench artifacts — run the tools/ scripts to rebuild.
+outputs/_demo/
+outputs/_demo_combined/
+outputs/_demo_step2/
+outputs/_demo_determinism/
+outputs/_bench/
+# Local draft, not a deliverable.
+EMAIL.md
 .hypothesis/
 .mypy_cache/
 .ruff_cache/

@@ -14,13 +14,19 @@ json in → flat, ink-on-paper nyc marriage-record request out. no fillable fiel
 `pikepdf` structural extract of page 2 → `00_packet/cc2002b_blank.pdf`. not a screenshot, the actual object graph.
 
 **2. measure every box.**
-`tools/inspect_form.py` dumps word/glyph coordinates straight off the pdf. hand-measured 32 fields (30 fillable, 2 protected) against that dump, checked the result against a rendered overlay:
+we inspected the extracted page before measuring: one page, 612×792 points, no AcroForm, 388 words, and 45 drawing objects. that answered the first question — there are no machine-readable fields to fill. `tools/inspect_form.py structure` records those facts; `words` dumps each word's native PDF bounding box.
+
+we then used the coordinate dump to propose the field regions, reviewed a rendered overlay by eye, and froze the approved map: 32 fields (30 fillable, 2 protected). the result is explicit JSON, not a hidden detector. `cc2002b.spec.json` records the measurement method, coordinate system, renderer, and field counts, and import-time geometry checks reject fields outside the page or a count that drifts.
+
+we also tested the tempting alternative: render the form and ask **GPT-4o Vision** to propose coordinates. it was about **460× slower** in the offline comparison and did not improve accuracy on this structured PDF, whose native word/glyph geometry was already available. that approach remains useful for a future pure scan, but it does not belong in this form's hot path: no API call, no model variance, no latency tax.
+
+one subtlety mattered: the **8 checkboxes are two different PDF glyph families**. the 3 form-type boxes at the top use Wingdings-style glyphs; the 5 sworn-statement boxes below use ASCII `(_)` glyphs. they look identical to a human, but their internal representations differ, so the map uses reading order and position rather than one universal checkbox-character rule.
 
 ![field map](evidence/field_map_overlay.png)
 ![legend](evidence/field_map_legend.png)
 
 **3. freeze it.**
-coordinates + types + checkbox groupings + the blank's own sha-256 → `cc2002b.spec.json`. runtime reads this, never re-derives it.
+coordinates + types + checkbox groupings + the blank's own sha-256 → `cc2002b.spec.json`. runtime reads this, never re-derives it. the fingerprint gate still fails closed if the form changes; the geometry validator catches a malformed spec before any ink is drawn.
 
 **4. build the engine.** one file, `cc2002b.py`:
 
@@ -36,6 +42,23 @@ json → pydantic schema → validate() → fingerprint check → fill_final() �
 - receipt: hashes of input, output, blank and spec — signed ed25519 if a key is present
 
 if the check fails, the pdf gets deleted. no proof receipt for a filing the checker itself doesn't believe in — you get a `.failed.json` instead.
+
+**the complete JSON-to-ink path, using Sol's sample.**
+
+`samples/01_party_short.json` is not a fixture-shaped abstraction; it is the actual input scenario we ship: Sol Lee requests a short form for Manhattan, selects the party sworn statement, asks for one copy, and supplies her address and contact details. The engine handles it in explicit stages:
+
+```text
+JSON
+  → strict Pydantic schema (shape, ISO dates, one authorization kind)
+  → business rules (1950 cutoff, borough/address/phone, fee)
+  → form_values() (May, 05/30/1991, NY, conditional checkbox fields)
+  → approved field map (32 rectangles)
+  → fill_final() (flat black text + X marks; signature untouched)
+  → saved PDF reopened and checked (semantic + raster + independent pdfium)
+  → proof receipt (input/template/output hashes, fee, checks, optional Ed25519 signature)
+```
+
+The visual walkthrough renders this exact path, not a hand-drawn approximation: it shows Sol's JSON beside the flat field map, then the blank beside the actual engine output, followed by the check count. The other two committed scenarios exercise relation/extended and law-enforcement branches, including the fee ambiguity and under-50 review note.
 
 **5. prove it doesn't lie to itself.**
 adversarial tests mutate a good pdf (fake signature, second checkbox, white cover, colored ink dark enough to pass a naive check) and assert the *named* check catches it. one test proves the independent renderer catches a signature tamper on its own. property-based fuzz tests (hypothesis) generate 50 random valid payloads end-to-end through fill + check with zero false rejects, and 50 random mutations (signature ink, extra checkbox, white cover) with zero false accepts.
@@ -241,6 +264,24 @@ overwrite the signed originals with unsigned rebuilds — the pdf bytes would
 still match, but the receipt records the run date, so re-filing on a later day
 rewrites the receipt and the committed signature stops matching it. the
 evidence is the committed pair; regenerate it somewhere else.
+
+**visual walkthrough — one page, extract → measure → prove:**
+
+```bash
+uv run python tools/demo_combined.py
+cd outputs/_demo_combined && python -m http.server 8765
+```
+
+The single page is the assessment narrative: brief → extract → measure →
+freeze the map → turn Sol's JSON into ink → check the filing → harden the proof
+and ship the three scenarios. It deliberately separates the build chronology
+from the runtime pipeline, so reproducibility appears where it belongs: after
+there is an output to harden, before the final evidence is shipped.
+For the structural measurement facts alone:
+
+```bash
+uv run python tools/inspect_form.py structure 00_packet/cc2002b_blank.pdf
+```
 
 **3. sign one with your own key:**
 

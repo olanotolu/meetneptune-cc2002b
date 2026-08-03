@@ -15,6 +15,7 @@ and do that comparison by eye against the overlay instead.
 
 Usage
 -----
+    python tools/inspect_form.py structure blank.pdf
     python tools/inspect_form.py words blank.pdf
     python tools/inspect_form.py overlay blank.pdf candidate_fields.json out.png
 
@@ -32,6 +33,24 @@ import pymupdf
 
 OVERLAY_DPI = 150 / 72
 COLORS = {"checkbox": (1, 0, 0), "text": (0, 0, 1), "line": (0.6, 0, 0.6)}
+
+
+def dump_structure(blank_path: Path) -> None:
+    """Print the facts that determine whether measurement can be automatic."""
+    doc = pymupdf.open(str(blank_path))
+    try:
+        page = doc[0]
+        print(f"pages:       {doc.page_count}")
+        print(f"page_size:   {page.rect.width:.2f} x {page.rect.height:.2f} pt")
+        print(f"acroform:    {bool(doc.is_form_pdf)}")
+        print(f"words:       {len(page.get_text('words'))}")
+        print(f"drawings:    {len(page.get_drawings())}")
+        print(
+            "decision:    no interactive fields; use native coordinates "
+            "+ human-approved overlay"
+        )
+    finally:
+        doc.close()
 
 
 def dump_words(blank_path: Path) -> None:
@@ -62,9 +81,15 @@ def draw_overlay(blank_path: Path, fields_json: Path, out_png: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] not in ("words", "overlay"):
+    if not argv or argv[0] not in ("structure", "words", "overlay"):
         print(__doc__)
         return 1
+    if argv[0] == "structure":
+        if len(argv) < 2:
+            print("usage: inspect_form.py structure blank.pdf")
+            return 1
+        dump_structure(Path(argv[1]))
+        return 0
     if argv[0] == "words":
         if len(argv) < 2:
             print("usage: inspect_form.py words blank.pdf")

@@ -48,6 +48,12 @@ ignore = [
     "RUF003",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# These are presentation generators: their embedded HTML is intentionally
+# readable as a single template line rather than Python-wrapped fragments.
+"tools/demo_*.py" = ["E501", "B905", "E741", "F401", "F841", "UP032"]
+"tools/bench_extract.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.11"
 files = ["cc2002b.py", "tools", "tests"]

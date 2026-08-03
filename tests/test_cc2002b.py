@@ -87,6 +87,29 @@ class CC2002BTests(unittest.TestCase):
         self.assertEqual(spec["form_id"], "CC2002B")
         self.assertEqual(spec["blank_sha256"], app.SPEC["blank_sha256"])
 
+    def test_approved_field_map_is_in_bounds_and_provenanced(self):
+        app.validate_field_geometry(app.SPEC)
+        self.assertEqual(app.SPEC["measurement"]["field_count"], 32)
+        self.assertEqual(app.SPEC["measurement"]["fillable_count"], 30)
+        self.assertEqual(app.SPEC["measurement"]["protected_count"], 2)
+        for field in app.SPEC["fields"].values():
+            self.assertGreater(field["w"], 0)
+            self.assertGreater(field["h"], 0)
+            self.assertLessEqual(field["x"] + field["w"], app.SPEC["page_size"][0])
+            self.assertLessEqual(field["y"] + field["h"], app.SPEC["page_size"][1])
+
+    def test_field_map_rejects_out_of_bounds_candidate(self):
+        candidate = copy.deepcopy(app.SPEC)
+        candidate["fields"]["month"]["x"] = candidate["page_size"][0]
+        with self.assertRaisesRegex(ValueError, "outside the page bounds"):
+            app.validate_field_geometry(candidate)
+
+    def test_field_map_rejects_protected_field_count_drift(self):
+        candidate = copy.deepcopy(app.SPEC)
+        candidate["measurement"]["protected_count"] = 1
+        with self.assertRaisesRegex(ValueError, "protected_count"):
+            app.validate_field_geometry(candidate)
+
     def test_party_payload_is_valid(self):
         self.assertTrue(app.validate(self.app_from(self.party), as_of=AS_OF).valid)
 

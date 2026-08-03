@@ -163,6 +163,31 @@ def _uninkable_char_error(field_name: str, value: str) -> str | None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def validate_field_geometry(spec: dict[str, Any]) -> None:
+    """Reject malformed or unsafe field maps before any PDF drawing."""
+    page_width, page_height = spec["page_size"]
+    fields = spec["fields"]
+    protected = set(spec["protected"])
+    if not protected <= fields.keys():
+        raise ValueError("protected fields must exist in the field map")
+    for name, field_spec in fields.items():
+        x, y, width, height = (
+            field_spec[key] for key in ("x", "y", "w", "h")
+        )
+        if width <= 0 or height <= 0:
+            raise ValueError(f"field {name!r} must have positive dimensions")
+        if x < 0 or y < 0 or x + width > page_width or y + height > page_height:
+            raise ValueError(f"field {name!r} falls outside the page bounds")
+        if field_spec["type"] not in {"text", "checkbox", "line"}:
+            raise ValueError(f"field {name!r} has an unknown type")
+    if len(fields) != spec["measurement"]["field_count"]:
+        raise ValueError("measurement field_count does not match the field map")
+    if len(fields) - len(protected) != spec["measurement"]["fillable_count"]:
+        raise ValueError("measurement fillable_count does not match the field map")
+    if len(protected) != spec["measurement"]["protected_count"]:
+        raise ValueError("measurement protected_count does not match the field map")
+
+
 def _load_spec_json(path: Path = SPEC_PATH) -> dict[str, Any]:
     data = json.loads(path.read_text())
     data["page_size"] = tuple(data["page_size"])
@@ -172,6 +197,7 @@ def _load_spec_json(path: Path = SPEC_PATH) -> dict[str, Any]:
         f.setdefault("fill", True)
         f.setdefault("x1", f["x"] + f["w"])
         f.setdefault("y1", f["y"] + f["h"])
+    validate_field_geometry(data)
     return data
 
 
