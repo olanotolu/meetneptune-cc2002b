@@ -1083,6 +1083,37 @@ def main() -> int:
     0%, 70%, 100% {{ background: transparent; }}
     15%, 35% {{ background: rgba(45,106,79,0.10); }}
   }}
+  .engine-stages {{ max-width: 980px; margin: 36px auto 8px; display: grid; gap: 14px; }}
+  .stage-row {{
+    display: grid; grid-template-columns: 54px 1fr 1.1fr; gap: 16px; align-items: stretch;
+    background: #fff; border: 1px solid var(--rule);
+    animation: stage-in 0.5s ease-out both;
+  }}
+  .stage-num {{
+    background: var(--green); color: #fff; font-family: var(--mono); font-weight: 700;
+    font-size: 18px; display: flex; align-items: center; justify-content: center;
+  }}
+  .stage-body {{ padding: 14px 16px; border-right: 1px solid var(--rule-soft); }}
+  .stage-body h4 {{ font-family: var(--sans); font-size: 14px; margin: 0 0 4px; }}
+  .stage-body .stage-tag {{ font-family: var(--mono); font-size: 10px; color: var(--green); letter-spacing: 0.08em; }}
+  .stage-body p {{ font-family: var(--sans); font-size: 12px; color: var(--ink-soft); margin: 6px 0 0; line-height: 1.55; }}
+  .stage-rejects {{ padding: 14px 16px; background: #faf9f6; }}
+  .stage-rejects .reject-label {{ font-family: var(--mono); font-size: 9px; color: #b03a2e; letter-spacing: 0.1em; margin-bottom: 8px; }}
+  .stage-rejects .reject-item {{ font-family: var(--mono); font-size: 10.5px; color: var(--ink-soft); line-height: 1.7; }}
+  .stage-rejects .reject-item .x {{ color: #b03a2e; font-weight: 700; margin-right: 6px; }}
+  .stage-rejects .accept-item .x {{ color: var(--green); }}
+  @keyframes stage-in {{ from {{ opacity: 0; transform: translateY(8px); }} to {{ opacity: 1; transform: none; }} }}
+  .stage-row:nth-child(1) {{ animation-delay: 0.1s; }}
+  .stage-row:nth-child(2) {{ animation-delay: 0.2s; }}
+  .stage-row:nth-child(3) {{ animation-delay: 0.3s; }}
+  .stage-row:nth-child(4) {{ animation-delay: 0.4s; }}
+  .stage-row:nth-child(5) {{ animation-delay: 0.5s; }}
+  .stage-row:nth-child(6) {{ animation-delay: 0.6s; }}
+  @media (max-width: 720px) {{
+    .stage-row {{ grid-template-columns: 40px 1fr; }}
+    .stage-rejects {{ grid-column: 1 / -1; border-top: 1px solid var(--rule-soft); }}
+    .stage-body {{ border-right: none; border-bottom: 1px solid var(--rule-soft); }}
+  }}
   .scenario-grid {{
     display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 20px; max-width: 900px; margin: 24px auto;
@@ -1531,6 +1562,107 @@ def main() -> int:
       <div class="pipeline-step"><strong>Draw</strong><span>black ink + X marks</span></div>
       <div class="pipeline-step"><strong>Check</strong><span class="result-pass">{check_count} checks pass</span></div>
     </div>
+
+    <p class="caption" style="margin-top:36px;">what each stage actually does &nbsp;·&nbsp; and what it refuses</p>
+    <div class="engine-stages">
+      <div class="stage-row">
+        <div class="stage-num">1</div>
+        <div class="stage-body">
+          <div class="stage-tag">PYDANTIC SCHEMA</div>
+          <h4>Shape, types, one authorization kind</h4>
+          <p>Pydantic parses the JSON into typed models. Dates must be ISO <code>YYYY-MM-DD</code>. The <code>authorization</code> field is a tagged union — exactly one of <code>party</code>, <code>written_authorization</code>, <code>attorney</code>, <code>relation</code>, or <code>law_enforcement</code>. You cannot construct two sworn statements at once; the type system forbids it.</p>
+        </div>
+        <div class="stage-rejects">
+          <div class="reject-label">REJECTS AT PARSE TIME</div>
+          <div class="reject-item"><span class="x">✗</span><code>"date": "05/30/1991"</code> → not ISO</div>
+          <div class="reject-item"><span class="x">✗</span><code>"authorization": {{"kind": "party", "kind": "attorney"}}</code></div>
+          <div class="reject-item"><span class="x">✗</span>missing required field → <code>ValidationError</code></div>
+          <div class="reject-item"><span class="x">✗</span>wrong type → <code>"copies": "three"</code></div>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage-num">2</div>
+        <div class="stage-body">
+          <div class="stage-tag">BUSINESS RULES · validate()</div>
+          <h4>Dates, boroughs, address, fee, fit</h4>
+          <p>Shape is already guaranteed. This layer catches what a validly-shaped payload can still get wrong: a marriage before 1950 (those are at the Municipal Archives), a borough that isn't one of the five, a state code the USPS doesn't recognize, text that won't physically fit its box, and glyphs the embedded font cannot render.</p>
+        </div>
+        <div class="stage-rejects">
+          <div class="reject-label">REJECTS BEFORE ANY INK</div>
+          <div class="reject-item"><span class="x">✗</span><code>marriage.year &lt; 1950</code> → Municipal Archives</div>
+          <div class="reject-item"><span class="x">✗</span><code>borough: "Yonkers"</code> → not the five</div>
+          <div class="reject-item"><span class="x">✗</span><code>state: "ZZ"</code> → not USPS</div>
+          <div class="reject-item"><span class="x">✗</span>text too wide for its box → <code>_fit</code> fails</div>
+          <div class="reject-item"><span class="x">✗</span>emoji / unsupported glyph → fails loud</div>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage-num">3</div>
+        <div class="stage-body">
+          <div class="stage-tag">FINGERPRINT GATE · assert_blank()</div>
+          <h4>Re-hash the blank on disk, fail closed</h4>
+          <p>Before a single character is drawn, the blank PDF on disk is re-hashed and compared to the approved SHA-256 pinned in the spec (<code>{spec['blank_sha256'][:16]}…</code>). Page count, page size, and AcroForm presence are checked too. If the form was swapped, edited, or re-saved, drawing never starts.</p>
+        </div>
+        <div class="stage-rejects">
+          <div class="reject-label">FAILS CLOSED ON DRIFT</div>
+          <div class="reject-item"><span class="x">✗</span>blank SHA-256 ≠ spec → <code>unknown form fingerprint</code></div>
+          <div class="reject-item"><span class="x">✗</span>page count changed → reject</div>
+          <div class="reject-item"><span class="x">✗</span>AcroForm appeared → reject</div>
+          <div class="reject-item accept-item"><span class="x">✓</span>match → drawing proceeds</div>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage-num">4</div>
+        <div class="stage-body">
+          <div class="stage-tag">FILL · fill_final()</div>
+          <h4>Flat black ink, signature untouched</h4>
+          <p>Flat black text and X marks are placed at the approved coordinates. The two protected fields (the signature line and its label) are skipped by name — belt and suspenders. The saved PDF gets a content-derived <code>/ID</code>, so the same input always produces byte-identical output.</p>
+        </div>
+        <div class="stage-rejects">
+          <div class="reject-label">NEVER DRAWN</div>
+          <div class="reject-item"><span class="x">✗</span>signature line → in <code>spec["protected"]</code></div>
+          <div class="reject-item"><span class="x">✗</span>no color but <code>(0,0,0)</code> — no gray, no RGB</div>
+          <div class="reject-item accept-item"><span class="x">✓</span>same JSON → same bytes, every run</div>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage-num">5</div>
+        <div class="stage-body">
+          <div class="stage-tag">CHECK · check_correctness()</div>
+          <h4>Reopen and grade three ways</h4>
+          <p>The saved PDF is reopened and graded. <strong>Layer A (semantic):</strong> every word and checkbox matches the payload (MuPDF). <strong>Layer B (raster):</strong> ink is black, dark enough, nothing painted over, no stray ink (MuPDF). <strong>Layer C (cross-check):</strong> the same raster checks run again through pdfium, so MuPDF isn't grading its own homework. {check_count} checks total.</p>
+        </div>
+        <div class="stage-rejects">
+          <div class="reject-label">CAUGHT BY THE CHECKER</div>
+          <div class="reject-item"><span class="x">✗</span>fake signature ink → <code>nothing_drawn_over:signature</code></div>
+          <div class="reject-item"><span class="x">✗</span>second checkbox → <code>checkbox_marked</code> count</div>
+          <div class="reject-item"><span class="x">✗</span>white cover-up → <code>no_erased_ink</code></div>
+          <div class="reject-item"><span class="x">✗</span>dark green ink → <code>ink_is_black</code></div>
+          <div class="reject-item accept-item"><span class="x">✓</span>all {check_count} pass → PDF released</div>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage-num">6</div>
+        <div class="stage-body">
+          <div class="stage-tag">RECEIPT · build_proof_receipt()</div>
+          <h4>Hashes + optional Ed25519 signature</h4>
+          <p>A JSON receipt is written next to the PDF: <code>template_hash</code> (the blank), <code>input_hash</code> (the canonical JSON), <code>output_hash</code> (the saved PDF), the fee, the check counts, and the renderer versions. If a signing key is present, a detached Ed25519 signature is written over the canonical receipt bytes — a third party can verify the triple (PDF, receipt, signature) against the public key.</p>
+        </div>
+        <div class="stage-rejects">
+          <div class="reject-label">EVIDENCE SHIPPED</div>
+          <div class="reject-item"><span class="x">→</span><code>template_hash</code> = blank SHA-256</div>
+          <div class="reject-item"><span class="x">→</span><code>input_hash</code> = canonical JSON SHA-256</div>
+          <div class="reject-item"><span class="x">→</span><code>output_hash</code> = saved PDF SHA-256</div>
+          <div class="reject-item accept-item"><span class="x">✓</span>Ed25519 signature if key present</div>
+        </div>
+      </div>
+    </div>
+
     <div class="views">
       <div class="view">
         <img src="data:image/png;base64,{_b64(step2_blank_png)}"/>
